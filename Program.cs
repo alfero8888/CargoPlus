@@ -37,8 +37,16 @@ internal static class Program
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Не удалось открыть локальную базу: " + ex.Message, "Cargo Plus", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(UiText.LocalDbFailed + ex.Message, "Cargo Plus", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
+            }
+
+            try
+            {
+                BrandLogo.Publish(store.GetSettings().LogoPath);
+            }
+            catch (Exception)
+            {
             }
 
             Application.Run(new AppHost(store));
@@ -64,6 +72,7 @@ internal sealed class AppHost : ApplicationContext
 
     private void ShowLogin()
     {
+        AppLanguage.Use(_store.GetSettings());
         var form = new LoginForm(_store);
         form.FormClosed += (_, _) =>
         {
@@ -84,7 +93,7 @@ internal sealed class AppHost : ApplicationContext
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Не удалось открыть программу.\n" + ex.Message, "Cargo Plus", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(UiText.OpenFailed + ex.Message, "Cargo Plus", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ExitThread();
             return;
         }

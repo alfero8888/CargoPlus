@@ -17,8 +17,9 @@ internal sealed class LoginForm : FullScreenForm
     {
         _store = store;
         _users = store.Operators().ToList();
-        Text = "Cargo Plus";
-        Build();
+        var company = _store.GetSettings().Company;
+        Text = UiText.WindowTitle(company);
+        Build(company);
         _level.SelectedIndexChanged += (_, _) => FillCategories();
         _category.SelectedIndexChanged += (_, _) => FillNames();
         _pin.KeyPress += DigitsOnly;
@@ -32,27 +33,28 @@ internal sealed class LoginForm : FullScreenForm
         FillLevels();
     }
 
-    private void Build()
+    private void Build(string company)
     {
         var title = new Label
         {
-            Text = "CARGO PLUS",
+            Text = string.IsNullOrWhiteSpace(company) ? AppRelease.Product : company.Trim(),
             Dock = DockStyle.Top,
             Height = 52,
             Font = Theme.Title,
             ForeColor = Theme.Header,
             TextAlign = ContentAlignment.BottomLeft,
+            AutoEllipsis = true,
         };
         var subtitle = new Label
         {
-            Text = "Приём груза",
+            Text = UiText.LoginSubtitle,
             Dock = DockStyle.Top,
             Height = 28,
             Font = Theme.Ui,
             ForeColor = Theme.Muted,
         };
-        var enter = Theme.Command("Войти", Theme.Accent, 180);
-        var exit = Theme.Command("Выход", Color.FromArgb(90, 104, 116), 140);
+        var enter = Theme.Command(UiText.Enter, Theme.Accent, 180);
+        var exit = Theme.Command(UiText.Exit, Color.FromArgb(90, 104, 116), 140);
         enter.Click += (_, _) => TryEnter();
         exit.Click += (_, _) => Close();
         var buttons = new FlowLayoutPanel
@@ -71,9 +73,7 @@ internal sealed class LoginForm : FullScreenForm
             Dock = DockStyle.Top,
             Font = Theme.Small,
             ForeColor = Theme.WarnFg,
-            Text = _store.DefaultAdminPinStillSet()
-                ? "Первый вход: Администратор, PIN 0000. После входа смените PIN в настройках."
-                : "",
+            Text = _store.DefaultAdminPinStillSet() ? UiText.FirstPin : "",
         };
 
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(28, 8, 28, 16) };
@@ -81,10 +81,10 @@ internal sealed class LoginForm : FullScreenForm
             body,
             title,
             subtitle,
-            Theme.Field("Уровень доступа", _level),
-            Theme.Field("Категория", _category),
-            Theme.Field("Имя оператора", _name),
-            Theme.Field("PIN", _pin),
+            Theme.Field(UiText.AccessLevel, _level),
+            Theme.Field(UiText.Category, _category),
+            Theme.Field(UiText.OperatorName, _name),
+            Theme.Field(UiText.Pin, _pin),
             buttons,
             hint);
         _card.Controls.Add(body);
@@ -103,17 +103,17 @@ internal sealed class LoginForm : FullScreenForm
     {
         _level.Items.Clear();
         foreach (var level in _users.Select(user => user.AccessLevel).Distinct())
-            _level.Items.Add(level);
+            _level.Items.Add(new LevelItem(level));
         if (_level.Items.Count > 0)
             _level.SelectedIndex = 0;
     }
 
     private void FillCategories()
     {
-        var level = _level.SelectedItem as string;
+        var level = (_level.SelectedItem as LevelItem)?.Code;
         _category.Items.Clear();
         foreach (var category in _users.Where(user => user.AccessLevel == level).Select(user => user.Category).Distinct())
-            _category.Items.Add(category);
+            _category.Items.Add(new CategoryItem(category));
         if (_category.Items.Count > 0)
             _category.SelectedIndex = 0;
         else
@@ -122,8 +122,8 @@ internal sealed class LoginForm : FullScreenForm
 
     private void FillNames()
     {
-        var level = _level.SelectedItem as string;
-        var category = _category.SelectedItem as string;
+        var level = (_level.SelectedItem as LevelItem)?.Code;
+        var category = (_category.SelectedItem as CategoryItem)?.Value;
         _name.Items.Clear();
         foreach (var user in _users.Where(user => user.AccessLevel == level && user.Category == category))
             _name.Items.Add(user.Name);
@@ -139,14 +139,14 @@ internal sealed class LoginForm : FullScreenForm
         var name = _name.SelectedItem as string;
         if (string.IsNullOrWhiteSpace(name))
         {
-            MessageBox.Show(this, "Выберите оператора.", "Вход", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, UiText.PickOperator, UiText.TitleLogin, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         var user = _store.Authenticate(name, _pin.Text.Trim());
         if (user is null)
         {
-            MessageBox.Show(this, "Неверный PIN.", "Вход", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, UiText.BadPin, UiText.TitleLogin, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             _pin.SelectAll();
             _pin.Focus();
             return;
@@ -155,6 +155,13 @@ internal sealed class LoginForm : FullScreenForm
         _closing = true;
         EnteredUser = user;
         Close();
+    }
+
+    private sealed class CategoryItem
+    {
+        public CategoryItem(string value) => Value = value;
+        public string Value { get; }
+        public override string ToString() => UiText.CategoryTitle(Value);
     }
 
     private static void DigitsOnly(object? sender, KeyPressEventArgs e)

@@ -20,8 +20,8 @@ internal sealed class NetworkPrinter
 
     public override string ToString()
     {
-        var name = string.IsNullOrWhiteSpace(Name) ? "порт 9100" : Name.Trim();
-        return LooksLikeLabel ? $"{Address}   {name}   этикетки" : $"{Address}   {name}";
+        var name = string.IsNullOrWhiteSpace(Name) ? UiText.Port9100 : Name.Trim();
+        return LooksLikeLabel ? $"{Address}   {name}   {UiText.LabelRole}" : $"{Address}   {name}";
     }
 }
 
@@ -71,13 +71,13 @@ internal static class NetworkPrinters
                     int foundCount;
                     lock (found)
                         foundCount = found.Count;
-                    progress.Report($"Проверено {current} из {hosts.Count}. Найдено {foundCount}.");
+                    progress.Report(UiText.ScanProgress(current, hosts.Count, foundCount));
                 }
             }
         });
 
         await Task.WhenAll(tasks);
-        progress.Report("Читаю названия принтеров…");
+        progress.Report(UiText.ReadingNames);
 
         var printers = new List<NetworkPrinter>();
         foreach (var address in found.OrderBy(item => item.GetAddressBytes()[0]).ThenBy(item => item.GetAddressBytes()[1]).ThenBy(item => item.GetAddressBytes()[2]).ThenBy(item => item.GetAddressBytes()[3]))

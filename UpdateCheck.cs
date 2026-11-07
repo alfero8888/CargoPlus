@@ -6,8 +6,20 @@ namespace CargoPlus;
 
 internal static class UpdateCheck
 {
-    public static async Task WatchAsync(Form owner, Action replaceAndClose)
+    private static int _running;
+
+    public static Task WatchAsync(Form owner, Action replaceAndClose) =>
+        CheckAsync(owner, replaceAndClose, manual: false);
+
+    public static async Task CheckAsync(Form owner, Action replaceAndClose, bool manual)
     {
+        if (Interlocked.Exchange(ref _running, 1) == 1)
+        {
+            if (manual)
+                Tell(owner, UiText.UpdateBusy);
+            return;
+        }
+
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
@@ -18,8 +30,19 @@ internal static class UpdateCheck
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             var tag = root.TryGetProperty("tag_name", out var tagValue) ? tagValue.GetString() : null;
-            if (!TryVersion(tag, out var remote) || remote <= AppRelease.Current)
+            if (!TryVersion(tag, out var remote))
+            {
+                if (manual)
+                    Tell(owner, UiText.UpdateCheckFailed.TrimEnd());
                 return;
+            }
+
+            if (remote <= AppRelease.Current)
+            {
+                if (manual)
+                    Tell(owner, UiText.UpToDate(AppRelease.Current));
+                return;
+            }
 
             var download = AssetUrl(root);
             var page = root.TryGetProperty("html_url", out var pageValue) ? pageValue.GetString() : null;
@@ -27,17 +50,34 @@ internal static class UpdateCheck
                 return;
             owner.BeginInvoke(() => Offer(owner, remote, download, page, replaceAndClose));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            if (manual)
+                Tell(owner, UiText.UpdateCheckFailed + ex.Message);
         }
+        finally
+        {
+            Interlocked.Exchange(ref _running, 0);
+        }
+    }
+
+    private static void Tell(Form owner, string text)
+    {
+        if (owner.IsDisposed)
+            return;
+        owner.BeginInvoke(() =>
+        {
+            if (!owner.IsDisposed)
+                MessageBox.Show(owner, text, UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        });
     }
 
     private static void Offer(Form owner, Version remote, string? download, string? page, Action replaceAndClose)
     {
         var answer = MessageBox.Show(
             owner,
-            $"На GitHub версия {remote}. У вас {AppRelease.Current}. Скачать и заменить программу?",
-            "Обновление",
+            UiText.UpdateOffer(remote, AppRelease.Current),
+            UiText.UpdateTitle,
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Information);
         if (answer != DialogResult.Yes)
@@ -66,14 +106,14 @@ internal static class UpdateCheck
             await File.WriteAllBytesAsync(file, bytes);
             var current = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(current))
-                throw new InvalidOperationException("Не найден файл запущенной программы.");
+                throw new InvalidOperationException(UiText.UpdateMissingFile);
             StartReplacer(file, current);
             replaceAndClose();
         }
         catch (Exception ex)
         {
             if (!owner.IsDisposed)
-                MessageBox.Show(owner, "Не удалось скачать обновление.\n" + ex.Message, "Обновление", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(owner, UiText.UpdateFailed + ex.Message, UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {

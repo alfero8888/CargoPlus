@@ -55,7 +55,7 @@ internal sealed class SyncService : IDisposable
             var synced = _store.SyncedCount();
             if (!settings.IsConfigured)
             {
-                Report(new SyncState(false, false, pendingCount, synced, null, _kiloBytesPerSecond, "Подключение к базе не настроено.", _lastOk));
+                Report(new SyncState(false, false, pendingCount, synced, null, _kiloBytesPerSecond, UiText.SyncDb, _lastOk));
                 return;
             }
 

@@ -65,8 +65,8 @@ internal sealed class RemoteDb
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
-            INSERT INTO `{PriemTable}` (KODID, KOD, KILO, TESLIM_EDEN, SIGORTA, NOT1, TARIH, track_code, BOLUM)
-            VALUES (@kodid, @kod, @kilo, @teslim, @sigorta, @not1, @tarih, @track, @bolum)
+            INSERT INTO `{PriemTable}` (KODID, KOD, KILO, TESLIM_EDEN, SIGORTA, NOT1, TARIH, track_code, BOLUM, sube, kabul_eden)
+            VALUES (@kodid, @kod, @kilo, @teslim, @sigorta, @not1, @tarih, @track, @bolum, @sube, @kabul)
             """;
         command.Parameters.Add("@kodid", MySqlDbType.Int32).Value = bag.KodId;
         command.Parameters.Add("@kod", MySqlDbType.UInt32).Value = bag.Kod;
@@ -77,6 +77,8 @@ internal sealed class RemoteDb
         command.Parameters.Add("@tarih", MySqlDbType.DateTime).Value = DateTime.SpecifyKind(bag.Tarih, DateTimeKind.Unspecified);
         command.Parameters.Add("@track", MySqlDbType.VarChar).Value = bag.TrackCode;
         command.Parameters.Add("@bolum", MySqlDbType.VarChar).Value = bag.Bolum;
+        command.Parameters.Add("@sube", MySqlDbType.VarChar).Value = Clip(bag.Office, 50);
+        command.Parameters.Add("@kabul", MySqlDbType.VarChar).Value = Clip(bag.OperatorName, 50);
         await command.ExecuteNonQueryAsync(cancellationToken);
         _schemaKey = Key(settings);
     }
@@ -104,19 +106,19 @@ internal sealed class RemoteDb
             {
                 return mysql.ErrorCode switch
                 {
-                    MySqlErrorCode.UnableToConnectToHost => "Нет связи с сервером.",
-                    MySqlErrorCode.AccessDenied => "Сервер отклонил логин или пароль.",
-                    MySqlErrorCode.UnknownDatabase => "Такой базы на сервере нет.",
-                    MySqlErrorCode.NoSuchTable => "На сервере нет нужной таблицы.",
-                    _ when mysql.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase) => "Сервер не ответил вовремя.",
+                    MySqlErrorCode.UnableToConnectToHost => UiText.NoServer,
+                    MySqlErrorCode.AccessDenied => UiText.BadLogin,
+                    MySqlErrorCode.UnknownDatabase => UiText.BadDatabase,
+                    MySqlErrorCode.NoSuchTable => UiText.BadTable,
+                    _ when mysql.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase) => UiText.Timeout,
                     _ => mysql.Message,
                 };
             }
 
             if (current is TimeoutException)
-                return "Сервер не ответил вовремя.";
+                return UiText.Timeout;
             if (current is SocketException)
-                return "Нет связи с сервером.";
+                return UiText.NoServer;
         }
 
         return exception.Message;
@@ -161,6 +163,8 @@ internal sealed class RemoteDb
                   `per_id` varchar(20) DEFAULT NULL,
                   `track_code` varchar(20) DEFAULT NULL,
                   `BOLUM` varchar(4) DEFAULT NULL,
+                  `sube` varchar(50) DEFAULT NULL,
+                  `kabul_eden` varchar(50) DEFAULT NULL,
                   `fat_no` varchar(25) DEFAULT NULL,
                   `mal_cin` text,
                   `mal_ad` varchar(30) DEFAULT NULL,
@@ -211,6 +215,9 @@ internal sealed class RemoteDb
             addedTrack = true;
         }
 
+        await EnsureTextColumnAsync(connection, "sube", 50, cancellationToken);
+        await EnsureTextColumnAsync(connection, "kabul_eden", 50, cancellationToken);
+
         var clientExists = true;
         try
         {
@@ -224,6 +231,28 @@ internal sealed class RemoteDb
         }
 
         return new SchemaStatus(tableExists, created, addedTrack, clientExists);
+    }
+
+    private static async Task EnsureTextColumnAsync(MySqlConnection connection, string column, int length, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var probe = connection.CreateCommand();
+            probe.CommandText = $"SELECT `{column}` FROM `{PriemTable}` LIMIT 0";
+            await probe.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (MySqlException ex) when (ex.ErrorCode == MySqlErrorCode.BadFieldError)
+        {
+            await using var alter = connection.CreateCommand();
+            alter.CommandText = $"ALTER TABLE `{PriemTable}` ADD COLUMN `{column}` varchar({length.ToString(CultureInfo.InvariantCulture)}) NULL";
+            await alter.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static string Clip(string value, int max)
+    {
+        var text = value.Trim();
+        return text.Length <= max ? text : text[..max];
     }
 
     private static MySqlConnection Create(AppSettings settings)

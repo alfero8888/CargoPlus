@@ -17,6 +17,12 @@ internal class FullScreenForm : Form
         KeyPreview = true;
         DoubleBuffered = true;
     }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        BrandLogo.Apply(this);
+    }
 }
 
 internal static class Theme
@@ -120,14 +126,17 @@ internal static class Theme
         }
     }
 
-    public static Panel Field(string caption, Control input, int height = 68)
+    public static Panel Field(string caption, Control input, int height = 68) =>
+        Field(Caption(caption), input, height);
+
+    public static Panel Field(Label caption, Control input, int height = 68)
     {
         var panel = new Panel { Height = height };
         input.Dock = DockStyle.Top;
         input.Height = height - 26;
-        var label = Caption(caption);
+        caption.Dock = DockStyle.Top;
         panel.Controls.Add(input);
-        panel.Controls.Add(label);
+        panel.Controls.Add(caption);
         return panel;
     }
 }

@@ -18,38 +18,37 @@ internal static class CargoPrinters
             return;
         }
 
-        using var document = Create(settings.LabelPrinter, "В настройках не выбран принтер этикеток.");
+        using var document = Create(settings.LabelPrinter, UiText.NoLabelPrinter);
         document.DocumentName = "Cargo Plus " + bag.TrackCode;
         document.PrintPage += (_, e) => DrawLabel(e, settings, session, bag);
         document.Print();
     }
 
-    public static void PrintReceipts(AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags)
+    public static void PrintReceipts(AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool includeFirmCopy = true)
     {
         if (PrinterAddress.TryParse(settings.ReceiptPrinter, out var address))
         {
-            PrintReceiptsRaw(address, settings, session, bags);
+            PrintReceiptsRaw(address, settings, session, bags, includeFirmCopy);
             return;
         }
 
-        using var document = Create(settings.ReceiptPrinter, "В настройках не выбран чековый принтер.");
-        document.DocumentName = "Cargo Plus чек " + session.Kod;
+        PrintReceiptCopy(settings, session, bags, storeCopy: true);
+        if (includeFirmCopy)
+            PrintReceiptCopy(settings, session, bags, storeCopy: false);
+    }
+
+    private static void PrintReceiptCopy(AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool storeCopy)
+    {
+        using var document = Create(settings.ReceiptPrinter, UiText.NoReceiptPrinter);
+        document.DocumentName = "Cargo Plus " + session.Kod;
         var width = document.DefaultPageSettings.PaperSize.Width;
         if (width < 120)
             width = 315;
-        var heightMm = Math.Max(220, 160 + bags.Count * 7);
-        document.DefaultPageSettings.PaperSize = new PaperSize(
-            "CargoPlusReceipt",
-            width,
-            (int)Math.Round(heightMm / 25.4 * 100));
-
-        var page = 0;
-        document.PrintPage += (_, e) =>
-        {
-            DrawReceipt(e, settings, session, bags, page == 0);
-            page++;
-            e.HasMorePages = page < 2;
-        };
+        var widthMm = width * 25.4f / 100f;
+        var used = MeasureReceipt(widthMm, settings, session, bags, storeCopy);
+        var height = (int)Math.Ceiling((used + 6f) / 25.4f * 100f);
+        document.DefaultPageSettings.PaperSize = new PaperSize("CargoPlusReceipt", width, Math.Max(height, 80));
+        document.PrintPage += (_, e) => DrawReceipt(e, settings, session, bags, storeCopy);
         document.Print();
     }
 
@@ -61,7 +60,7 @@ internal static class CargoPrinters
         var document = new PrintDocument();
         document.PrinterSettings.PrinterName = printerName;
         if (!document.PrinterSettings.IsValid)
-            throw new InvalidOperationException($"Принтер «{printerName}» не найден в Windows.");
+            throw new InvalidOperationException(UiText.PrinterMissing(printerName));
 
         document.PrintController = new StandardPrintController();
         document.DefaultPageSettings.Margins = new Margins(8, 8, 8, 8);
@@ -70,7 +69,7 @@ internal static class CargoPrinters
 
     private static void DrawLabel(PrintPageEventArgs e, AppSettings settings, SessionInfo session, BagRecord bag)
     {
-        var graphics = e.Graphics ?? throw new InvalidOperationException("Принтер не дал лист для этикетки.");
+        var graphics = e.Graphics ?? throw new InvalidOperationException(UiText.NoLabelPage);
         var (width, _) = PageMillimeters(e, graphics);
         Prepare(graphics);
         PaintLabel(graphics, width, settings, session, bag);
@@ -86,7 +85,8 @@ internal static class CargoPrinters
         var contentWidth = Math.Max(20, width - margin * 2);
         using var ink = new SolidBrush(Color.Black);
         using var title = new Font("Segoe UI", 10f, FontStyle.Bold);
-        using var track = new Font("Consolas", 11f, FontStyle.Bold);
+        using var track = new Font("Segoe UI", 16f, FontStyle.Bold);
+        using var strong = new Font("Segoe UI", 13f, FontStyle.Bold);
         using var body = new Font("Segoe UI", 8f);
         using var center = new StringFormat
         {
@@ -100,24 +100,17 @@ internal static class CargoPrinters
             FormatFlags = StringFormatFlags.NoWrap,
         };
 
-        var company = string.IsNullOrWhiteSpace(settings.Company) ? "CARGO PLUS" : settings.Company.Trim();
-        graphics.DrawString(company, title, ink, new RectangleF(x, y, contentWidth, 5), center);
-        y += 4.6f;
-        if (!string.IsNullOrWhiteSpace(settings.Branch))
-        {
-            graphics.DrawString(settings.Branch.Trim(), body, ink, new RectangleF(x, y, contentWidth, 4.5f), center);
-            y += 4.4f;
-        }
+        y = DrawBrand(graphics, settings, x, y, contentWidth, 12f, title, body, ink, center);
 
         var barcodeHeight = 16f;
         var bagNumber = bag.KodId.ToString(CultureInfo.InvariantCulture);
         Code128.Draw(graphics, new RectangleF(x, y, contentWidth, barcodeHeight), bagNumber);
         y += barcodeHeight + 1f;
-        graphics.DrawString(bagNumber, track, ink, new RectangleF(x, y, contentWidth, 5), center);
-        y += 5.2f;
+        graphics.DrawString(bagNumber, track, ink, new RectangleF(x, y, contentWidth, 7), center);
+        y += 6.4f;
+        DrawLine(graphics, strong, ink, line, ref y, contentWidth, x, words.BolumBanner(bag.Bolum), 6.2f);
         DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Client}: {bag.Kod}", 4.4f);
-        DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Department}: {words.Bolum(bag.Bolum)}", 4.4f);
-        DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Kilo}: {bag.Kilo}", 4.4f);
+        DrawLine(graphics, strong, ink, line, ref y, contentWidth, x, $"{words.Kilo}: {bag.Kilo}", 6.2f);
         DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Person}: {CargoRules.MaskPart(session.ClientName, 3)} {CargoRules.MaskPart(session.ClientSurname, 3)}".Trim(), 4.4f);
         if (!string.IsNullOrWhiteSpace(session.ClientPhone))
             DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Phone}: {CargoRules.MaskPhone(session.ClientPhone)}", 4.4f);
@@ -129,13 +122,13 @@ internal static class CargoPrinters
 
     private static void DrawReceipt(PrintPageEventArgs e, AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool storeCopy)
     {
-        var graphics = e.Graphics ?? throw new InvalidOperationException("Принтер не дал лист для чека.");
+        var graphics = e.Graphics ?? throw new InvalidOperationException(UiText.NoReceiptPage);
         var (width, _) = PageMillimeters(e, graphics);
         Prepare(graphics);
         PaintReceipt(graphics, width, settings, session, bags, storeCopy);
     }
 
-    private static void PaintReceipt(Graphics graphics, float width, AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool storeCopy)
+    private static float PaintReceipt(Graphics graphics, float width, AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool storeCopy)
     {
         var words = PrintWords.From(settings);
         var margin = 3f;
@@ -144,24 +137,39 @@ internal static class CargoPrinters
         var contentWidth = Math.Max(30, Math.Min(width - margin * 2, 74));
         using var ink = new SolidBrush(Color.Black);
         using var title = new Font("Segoe UI", 11f, FontStyle.Bold);
-        using var head = new Font("Segoe UI", 9f, FontStyle.Bold);
+        using var head = new Font("Segoe UI", 11f, FontStyle.Bold);
         using var body = new Font("Segoe UI", 8f);
-        using var small = new Font("Segoe UI", 7.5f);
+        using var bagFont = new Font("Segoe UI", 13f, FontStyle.Bold);
         using var center = new StringFormat { Alignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
         using var line = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
-        using var pen = new Pen(Color.Black, 0.25f);
+        using var wrap = new StringFormat { Trimming = StringTrimming.Word };
+        using var pen = new Pen(Color.Black, 0.35f);
 
-        var company = string.IsNullOrWhiteSpace(settings.Company) ? "CARGO PLUS" : settings.Company.Trim();
-        graphics.DrawString(company, title, ink, new RectangleF(x, y, contentWidth, 5.5f), center);
-        y += 5.2f;
-        if (!string.IsNullOrWhiteSpace(settings.Branch))
+        y = DrawBrand(graphics, settings, x, y, contentWidth, 14f, title, body, ink, center);
+        var bolum = bags.Count > 0 ? bags[0].Bolum : "";
+        if (bolum.Length > 0)
         {
-            graphics.DrawString(settings.Branch.Trim(), head, ink, new RectangleF(x, y, contentWidth, 4.5f), center);
-            y += 4.6f;
+            DrawLine(graphics, body, ink, center, ref y, contentWidth, x, words.ShipmentKind, 4.2f);
+            using var banner = FitFont(graphics, words.BolumBanner(bolum), 26f, contentWidth);
+            var bannerHeight = Math.Max(8f, graphics.MeasureString(words.BolumBanner(bolum), banner, new SizeF(contentWidth, 40f)).Height);
+            graphics.DrawString(words.BolumBanner(bolum), banner, ink, new RectangleF(x, y, contentWidth, bannerHeight + 1f), center);
+            y += bannerHeight + 1.2f;
         }
 
-        graphics.DrawString(storeCopy ? words.CopyStore : words.CopyFirm, head, ink, new RectangleF(x, y, contentWidth, 4.5f), center);
-        y += 5;
+        var copyFont = storeCopy
+            ? new Font("Segoe UI", 16f, FontStyle.Bold)
+            : new Font("Segoe UI", 11f, FontStyle.Bold);
+        using (copyFont)
+        {
+            var copy = storeCopy ? words.CopyStore : words.CopyFirm;
+            var copyHeight = Math.Max(storeCopy ? 7f : 5f, graphics.MeasureString(copy, copyFont, new SizeF(contentWidth, 30f)).Height);
+            graphics.DrawString(copy, copyFont, ink, new RectangleF(x, y, contentWidth, copyHeight + 1f), center);
+            y += copyHeight + 1.4f;
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.TrackCode))
+            DrawLine(graphics, head, ink, center, ref y, contentWidth, x, $"{words.Track}: {session.TrackCode}", 5.4f);
+
         var moment = bags.Count > 0 ? bags[0].Tarih : DateTime.Now;
         DrawLine(graphics, body, ink, line, ref y, contentWidth, x, moment.ToString("dd.MM.yyyy HH:mm"), 4.4f);
         DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Accepted}: {session.OperatorName}", 4.4f);
@@ -171,41 +179,114 @@ internal static class CargoPrinters
             DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Phone}: {CargoRules.MaskPhone(session.ClientPhone)}", 4.4f);
         DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.Store}: {session.StoreName}", 4.4f);
         DrawLine(graphics, body, ink, line, ref y, contentWidth, x, $"{words.StorePhone}: {session.StorePhone}", 4.4f);
-        if (!string.IsNullOrWhiteSpace(session.TrackCode))
-            DrawLine(graphics, head, ink, line, ref y, contentWidth, x, $"{words.Track}: {session.TrackCode}", 4.6f);
-        y += 1.5f;
+        y += 1.2f;
 
-        var colKilo = x + contentWidth * 0.42f;
-        var colBolum = x + contentWidth * 0.66f;
+        var colKilo = x + contentWidth * 0.56f;
         graphics.DrawLine(pen, x, y, x + contentWidth, y);
-        y += 0.6f;
+        y += 0.8f;
         graphics.DrawString(words.Bag, head, ink, x, y);
         graphics.DrawString(words.Kilo, head, ink, colKilo, y);
-        graphics.DrawString(words.Department, head, ink, colBolum, y);
-        y += 4.4f;
+        y += 5.6f;
         graphics.DrawLine(pen, x, y, x + contentWidth, y);
 
         decimal kilos = 0;
         foreach (var bag in bags)
         {
             kilos += CargoRules.ParseKilo(bag.Kilo);
-            y += 0.5f;
-            graphics.DrawString(bag.KodId.ToString(CultureInfo.InvariantCulture), small, ink, new RectangleF(x, y, colKilo - x - 1, 4.2f), line);
-            graphics.DrawString(bag.Kilo, small, ink, new RectangleF(colKilo, y, colBolum - colKilo - 1, 4.2f), line);
-            graphics.DrawString(words.Bolum(bag.Bolum), small, ink, new RectangleF(colBolum, y, x + contentWidth - colBolum, 4.2f), line);
-            y += 4.2f;
+            y += 0.7f;
+            var number = bag.KodId.ToString(CultureInfo.InvariantCulture);
+            graphics.DrawString(number, bagFont, ink, new RectangleF(x, y, colKilo - x - 1, 6.4f), line);
+            graphics.DrawString(bag.Kilo, bagFont, ink, new RectangleF(colKilo, y, x + contentWidth - colKilo, 6.4f), line);
+            y += 6.4f;
         }
 
         graphics.DrawLine(pen, x, y, x + contentWidth, y);
-        y += 1.5f;
-        DrawLine(graphics, head, ink, line, ref y, contentWidth, x, $"{words.TotalBags}: {bags.Count}", 4.6f);
-        DrawLine(graphics, head, ink, line, ref y, contentWidth, x, $"{words.TotalKilo}: {CargoRules.FormatWeight(kilos)}", 4.6f);
+        y += 1.4f;
+        DrawLine(graphics, head, ink, line, ref y, contentWidth, x, $"{words.TotalBags}: {bags.Count}", 5.2f);
+        DrawLine(graphics, head, ink, line, ref y, contentWidth, x, $"{words.TotalKilo}: {CargoRules.FormatWeight(kilos)}", 5.2f);
         if (!string.IsNullOrWhiteSpace(session.TrackCode))
         {
-            y += 2;
-            var qr = Math.Min(32f, contentWidth);
-            QrMark.Draw(graphics, new RectangleF(x + (contentWidth - qr) / 2, y, qr, qr), CargoRules.TrackingLink(session.TrackCode));
+            y += 2f;
+            var qr = Math.Min(64f, contentWidth);
+            QrMark.Draw(graphics, new RectangleF(x + (contentWidth - qr) / 2f, y, qr, qr), CargoRules.TrackingLink(session.TrackCode));
+            y += qr;
         }
+
+        if (!storeCopy)
+        {
+            var notes = bags.Where(HasNote).ToList();
+            if (notes.Count > 0)
+            {
+                y += 2f;
+                graphics.DrawLine(pen, x, y, x + contentWidth, y);
+                y += 1.2f;
+                DrawLine(graphics, head, ink, line, ref y, contentWidth, x, words.Note, 5f);
+                foreach (var bag in notes)
+                {
+                    var text = $"{bag.KodId}  {bag.Not1.Trim()}";
+                    var size = graphics.MeasureString(text, body, new SizeF(contentWidth, 40f));
+                    graphics.DrawString(text, body, ink, new RectangleF(x, y, contentWidth, size.Height + 0.4f), wrap);
+                    y += size.Height + 0.6f;
+                }
+            }
+        }
+
+        return y + margin;
+    }
+
+    private static float DrawBrand(Graphics graphics, AppSettings settings, float x, float y, float contentWidth, float logoHeight, Font title, Font body, Brush ink, StringFormat center)
+    {
+        var company = string.IsNullOrWhiteSpace(settings.Company) ? "CARGO PLUS" : settings.Company.Trim();
+        using var logo = BrandLogo.TryLoad(settings.LogoPath);
+        var textX = x;
+        var textWidth = contentWidth;
+        var block = 0f;
+        if (logo is not null)
+        {
+            var logoWidth = logoHeight * logo.Width / Math.Max(1, logo.Height);
+            if (logoWidth > contentWidth * 0.38f)
+                logoWidth = contentWidth * 0.38f;
+            var drawnHeight = logoWidth * logo.Height / Math.Max(1, logo.Width);
+            graphics.DrawImage(logo, x, y, logoWidth, drawnHeight);
+            textX = x + logoWidth + 1.6f;
+            textWidth = Math.Max(12f, contentWidth - logoWidth - 1.6f);
+            block = drawnHeight;
+        }
+
+        graphics.DrawString(company, title, ink, new RectangleF(textX, y, textWidth, 5.6f), center);
+        var textBlock = 5.2f;
+        if (!string.IsNullOrWhiteSpace(settings.Branch))
+        {
+            graphics.DrawString(settings.Branch.Trim(), body, ink, new RectangleF(textX, y + 5.2f, textWidth, 4.4f), center);
+            textBlock = 9.6f;
+        }
+
+        return y + Math.Max(block, textBlock) + 1.2f;
+    }
+
+    private static Font FitFont(Graphics graphics, string text, float maxPoint, float width)
+    {
+        for (var size = maxPoint; size >= 12f; size -= 1f)
+        {
+            var font = new Font("Segoe UI", size, FontStyle.Bold);
+            if (graphics.MeasureString(text, font).Width <= width)
+                return font;
+            font.Dispose();
+        }
+
+        return new Font("Segoe UI", 12f, FontStyle.Bold);
+    }
+
+    private static bool HasNote(BagRecord bag) =>
+        !string.IsNullOrWhiteSpace(bag.Not1) && bag.Not1.Trim() != "0";
+
+    private static float MeasureReceipt(float widthMm, AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool storeCopy)
+    {
+        using var bitmap = Sheet(800, 4800);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.Clear(Color.White);
+        Prepare(graphics);
+        return PaintReceipt(graphics, widthMm, settings, session, bags, storeCopy);
     }
 
     private static void Prepare(Graphics graphics)
@@ -224,28 +305,30 @@ internal static class CargoPrinters
             PaintLabel(graphics, WidthMm(bitmap), settings, session, bag);
         }
 
-        Send(address, Argox(bitmap), "этикеток");
+        Send(address, Argox(bitmap), UiText.KindLabels);
     }
 
-    private static void PrintReceiptsRaw(IPAddress address, AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags)
+    private static void PrintReceiptsRaw(IPAddress address, AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool includeFirmCopy)
     {
-        var height = 1100 + bags.Count * 40;
         var payload = new List<byte> { 0x1B, 0x40 };
-        foreach (var copy in new[] { "store", "firm" })
+        foreach (var storeCopy in includeFirmCopy ? new[] { true, false } : new[] { true })
         {
-            using var bitmap = Sheet(576, height);
-            using (var graphics = Graphics.FromImage(bitmap))
+            using var tall = Sheet(576, 4800);
+            float used;
+            using (var graphics = Graphics.FromImage(tall))
             {
                 graphics.Clear(Color.White);
                 Prepare(graphics);
-                PaintReceipt(graphics, WidthMm(bitmap), settings, session, bags, copy == "store");
+                used = PaintReceipt(graphics, WidthMm(tall), settings, session, bags, storeCopy);
             }
 
+            var pixels = (int)Math.Ceiling(used / 25.4f * tall.VerticalResolution) + 8;
+            using var bitmap = CropTop(tall, pixels);
             payload.AddRange(EscPos(bitmap));
-            payload.AddRange([0x1B, 0x64, 0x03, 0x1D, 0x56, 0x42, 0x00]);
+            payload.AddRange([0x1B, 0x64, 0x02, 0x1D, 0x56, 0x42, 0x00]);
         }
 
-        Send(address, payload.ToArray(), "чеков");
+        Send(address, payload.ToArray(), UiText.KindReceipts);
     }
 
     private static Bitmap Sheet(int width, int height)
@@ -256,6 +339,20 @@ internal static class CargoPrinters
     }
 
     private static float WidthMm(Bitmap bitmap) => bitmap.Width / bitmap.HorizontalResolution * 25.4f;
+
+    private static Bitmap CropTop(Bitmap source, int height)
+    {
+        height = Math.Clamp(height, 1, source.Height);
+        var target = new Bitmap(source.Width, height, PixelFormat.Format24bppRgb);
+        target.SetResolution(source.HorizontalResolution, source.VerticalResolution);
+        using var graphics = Graphics.FromImage(target);
+        graphics.DrawImage(
+            source,
+            new Rectangle(0, 0, source.Width, height),
+            new Rectangle(0, 0, source.Width, height),
+            GraphicsUnit.Pixel);
+        return target;
+    }
 
     private static byte[] Argox(Bitmap bitmap)
     {
@@ -323,7 +420,7 @@ internal static class CargoPrinters
         if (!connect.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(5)))
         {
             socket.Close();
-            throw new InvalidOperationException($"Принтер {kind} {address} не отвечает.");
+            throw new InvalidOperationException(UiText.PrinterSilent(kind, address.ToString()));
         }
 
         try
@@ -335,7 +432,7 @@ internal static class CargoPrinters
         }
         catch (Exception ex) when (ex is IOException or SocketException)
         {
-            throw new InvalidOperationException($"Принтер {kind} {address} не отвечает.");
+            throw new InvalidOperationException(UiText.PrinterSilent(kind, address.ToString()));
         }
     }
 

@@ -74,7 +74,7 @@ internal static partial class CargoRules
         var text = input.Trim().Replace('.', ',');
         if (!KiloPattern().IsMatch(text))
         {
-            error = "Килограммы пишите числом, дробь через запятую. Например 12,5.";
+            error = UiText.KiloFormat;
             return false;
         }
 
@@ -85,14 +85,14 @@ internal static partial class CargoRules
         normalized = parts.Length == 1 ? whole : whole + "," + parts[1];
         if (normalized.Length > 11)
         {
-            error = "Вес длиннее 11 символов.";
+            error = UiText.KiloLong;
             return false;
         }
 
         var value = decimal.Parse(normalized.Replace(',', '.'), CultureInfo.InvariantCulture);
         if (value <= 0)
         {
-            error = "Вес должен быть больше нуля.";
+            error = UiText.KiloZero;
             return false;
         }
 
@@ -118,20 +118,20 @@ internal static partial class CargoRules
         joined = "";
         if (phone.Length == 0)
         {
-            error = "Введите телефон магазина.";
+            error = UiText.NeedStorePhone;
             return false;
         }
 
         if (name.Length == 0)
         {
-            error = "Введите название магазина.";
+            error = UiText.NeedStoreName;
             return false;
         }
 
         joined = phone + " " + name;
         if (joined.Length > TeslimMax)
         {
-            error = $"Телефон и название вместе занимают {joined.Length} символов. В таблице места 25.";
+            error = UiText.StoreTooLong(joined.Length);
             return false;
         }
 
@@ -145,42 +145,31 @@ internal static partial class CargoRules
         not1 = "0";
         if (string.IsNullOrEmpty(bolum))
         {
-            error = "Выберите тип: авиа, тир, эманет, пакет или играджат.";
+            error = UiText.NeedType;
             return false;
         }
 
-        if (InsuranceLocked(bolum))
+        if (!InsuranceLocked(bolum))
         {
-            error = "";
-            return true;
+            var text = insuranceText.Trim();
+            if (text.Length == 0)
+                sigorta = 0;
+            else if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out sigorta) || sigorta < 0)
+            {
+                error = UiText.InsuranceNumber;
+                return false;
+            }
         }
 
-        var text = insuranceText.Trim();
-        if (text.Length == 0)
-            sigorta = 0;
-        else if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out sigorta) || sigorta < 0)
+        var reason = Compact(note);
+        if (reason.Length > NoteMax)
         {
-            error = "Страховка — целое число. По умолчанию 10, можно поставить другое или 0.";
+            error = UiText.NoteTooLong;
             return false;
         }
 
-        if (sigorta == 0)
-        {
-            var reason = Compact(note);
-            if (reason.Length == 0 || reason == "0")
-            {
-                error = "Страховка не взята. Напишите, почему.";
-                return false;
-            }
-
-            if (reason.Length > NoteMax)
-            {
-                error = "Примечание длиннее 100 символов.";
-                return false;
-            }
-
+        if (reason.Length > 0 && reason != "0")
             not1 = reason;
-        }
 
         error = "";
         return true;
@@ -190,25 +179,25 @@ internal static partial class CargoRules
     {
         if (start < 0 || end < 0 || next < 0)
         {
-            error = "Номера мешков не могут быть отрицательными.";
+            error = UiText.RangeNegative;
             return false;
         }
 
         if (end < start)
         {
-            error = "Конец диапазона меньше начала.";
+            error = UiText.RangeEndSmall;
             return false;
         }
 
         if (next < start)
         {
-            error = "Следующий номер меньше начала диапазона.";
+            error = UiText.RangeNextSmall;
             return false;
         }
 
         if (next > end + 1)
         {
-            error = "Следующий номер дальше конца диапазона.";
+            error = UiText.RangeNextFar;
             return false;
         }
 

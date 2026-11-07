@@ -10,6 +10,16 @@ internal sealed class SettingsForm : Form
     private readonly AppUser _user;
     private readonly TextBox _company = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _branch = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
+    private readonly CheckBox[] _bolumBoxes = BolumChoice.All
+        .Select(choice => new CheckBox
+        {
+            Tag = choice.Code,
+            AutoSize = true,
+            Font = Theme.Ui,
+            Margin = new Padding(0, 4, 18, 4),
+            Checked = true,
+        })
+        .ToArray();
     private readonly ComboBox _language = new() { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Input };
     private readonly TextBox _host = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _port = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
@@ -30,13 +40,31 @@ internal sealed class SettingsForm : Form
     private readonly Label _rangeHint = new() { AutoSize = false, Height = 48, Font = Theme.UiBold };
     private readonly Label _serverHint = new() { AutoSize = false, Height = 48, Font = Theme.Ui, ForeColor = Theme.Muted };
     private readonly ListBox _operators = new() { Font = Theme.Ui, IntegralHeight = false };
+    private readonly List<Action> _bind = new();
+    private readonly PictureBox _logoPreview = new()
+    {
+        SizeMode = PictureBoxSizeMode.Zoom,
+        Height = 88,
+        Width = 160,
+        BackColor = Color.White,
+        BorderStyle = BorderStyle.FixedSingle,
+    };
+    private string _logoSource = "";
+    private bool _logoClear;
+    private TabPage _firmPage = null!;
+    private TabPage _dbPage = null!;
+    private TabPage _printerPage = null!;
+    private TabPage _numberPage = null!;
+    private TabPage _operatorPage = null!;
+    private Button _save = null!;
+    private Button _closeButton = null!;
 
     public SettingsForm(LocalStore store, RemoteDb remote, AppUser user)
     {
         _store = store;
         _remote = remote;
         _user = user;
-        Text = "Настройки Cargo Plus";
+        Text = UiText.WindowTitle(store.GetSettings().Company);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -52,10 +80,24 @@ internal sealed class SettingsForm : Form
         tabs.TabPages.Add(BuildNumbers());
         tabs.TabPages.Add(BuildOperators());
 
-        var save = Theme.Command("Сохранить", Theme.Accent, 160);
-        var close = Theme.Command("Закрыть", Color.FromArgb(90, 104, 116), 140);
-        save.Click += (_, _) => Save();
-        close.Click += (_, _) => Close();
+        _save = Theme.Command(UiText.Save, Theme.Accent, 160);
+        _closeButton = Theme.Command(UiText.Close, Color.FromArgb(90, 104, 116), 140);
+        _save.Click += (_, _) => Save();
+        _closeButton.Click += (_, _) => Close();
+        _bind.Add(() =>
+        {
+            Text = UiText.WindowTitle(_company.Text);
+            _save.Text = UiText.Save;
+            _closeButton.Text = UiText.Close;
+            _firmPage.Text = UiText.TabFirm;
+            _dbPage.Text = UiText.TabDb;
+            _printerPage.Text = UiText.TabPrinters;
+            _numberPage.Text = UiText.TabNumbers;
+            _operatorPage.Text = UiText.TabOperators;
+            _ssl.Text = UiText.UseSsl;
+            foreach (var box in _bolumBoxes)
+                box.Text = BolumChoice.TitleOf((string)box.Tag!);
+        });
         var bar = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -64,8 +106,8 @@ internal sealed class SettingsForm : Form
             Padding = new Padding(12),
             BackColor = Color.White,
         };
-        bar.Controls.Add(close);
-        bar.Controls.Add(save);
+        bar.Controls.Add(_closeButton);
+        bar.Controls.Add(_save);
 
         Controls.Add(tabs);
         Controls.Add(bar);
@@ -74,35 +116,48 @@ internal sealed class SettingsForm : Form
 
     private TabPage BuildFirm()
     {
-        var page = new TabPage("Фирма") { Padding = new Padding(16), BackColor = Theme.Bg };
+        _firmPage = new TabPage(UiText.TabFirm) { Padding = new Padding(16), BackColor = Theme.Bg };
         _language.Items.Add(new LanguageItem("tr", "Türkçe"));
         _language.Items.Add(new LanguageItem("ru", "Русский"));
-        var hint = new Label
-        {
-            Height = 72,
-            Font = Theme.Ui,
-            ForeColor = Theme.Muted,
-            Text = "Название и отделение печатаются сверху на бирке и на чеке. Türkçe стоит по умолчанию: бирка, чек и список отделов. Русский выбирается здесь.",
-        };
+        _language.SelectedIndexChanged += (_, _) => PreviewLanguage();
+        var hint = BindLabel(() => UiText.LanguageHint, 72);
+        var toggles = BindLabel(() => UiText.BolumToggles, 52);
+        var toggleRow = new FlowLayoutPanel { Height = 40, WrapContents = false, Padding = new Padding(0, 4, 0, 0) };
+        foreach (var box in _bolumBoxes)
+            toggleRow.Controls.Add(box);
+        var choose = BindButton(() => UiText.ChooseLogo, Theme.Header, 180);
+        var clear = BindButton(() => UiText.ClearLogo, Color.FromArgb(90, 104, 116), 180);
+        choose.Click += (_, _) => ChooseLogo();
+        clear.Click += (_, _) => ClearLogo();
+        var buttons = new FlowLayoutPanel { Height = 58, WrapContents = false, Padding = new Padding(0, 8, 0, 0) };
+        buttons.Controls.Add(choose);
+        buttons.Controls.Add(clear);
+        var preview = new Panel { Height = 96 };
+        _logoPreview.Dock = DockStyle.Left;
+        preview.Controls.Add(_logoPreview);
         Theme.Stack(
-            page,
-            Theme.Field("Название фирмы", _company),
-            Theme.Field("Отделение", _branch),
-            Theme.Field("Язык бирки и чека", _language),
-            hint);
-        return page;
+            _firmPage,
+            BindField(() => UiText.Company, _company),
+            BindField(() => UiText.Branch, _branch),
+            BindField(() => UiText.Language, _language),
+            hint,
+            toggles,
+            toggleRow,
+            preview,
+            buttons);
+        return _firmPage;
     }
 
     private TabPage BuildConnection()
     {
-        var page = new TabPage("База") { Padding = new Padding(16), BackColor = Theme.Bg };
-        var test = Theme.Command("Проверить подключение", Theme.Header, 260);
+        _dbPage = new TabPage(UiText.TabDb) { Padding = new Padding(16), BackColor = Theme.Bg };
+        var test = BindButton(() => UiText.TestConnection, Theme.Header, 260);
         test.Click += async (_, _) => await TestAsync(test);
-        var host = Theme.Field("Адрес сервера", _host);
-        var port = Theme.Field("Порт", _port, 68);
+        var host = BindField(() => UiText.ServerAddress, _host);
+        var port = BindField(() => UiText.Port, _port, 68);
         port.Width = 160;
         port.Dock = DockStyle.Left;
-        var database = Theme.Field("База", _database);
+        var database = BindField(() => UiText.Database, _database);
         var row = new Panel { Height = 68 };
         row.Controls.Add(database);
         row.Controls.Add(port);
@@ -114,23 +169,23 @@ internal sealed class SettingsForm : Form
         _ssl.Dock = DockStyle.Left;
         sslRow.Controls.Add(_ssl);
         Theme.Stack(
-            page,
+            _dbPage,
             host,
             row,
-            Theme.Field("Логин", _login),
-            Theme.Field("Пароль", _password),
+            BindField(() => UiText.LoginName, _login),
+            BindField(() => UiText.Password, _password),
             sslRow,
             buttons,
             _testResult);
-        return page;
+        return _dbPage;
     }
 
     private TabPage BuildPrinters()
     {
-        var page = new TabPage("Принтеры") { Padding = new Padding(16), BackColor = Theme.Bg };
-        var scan = Theme.Command("Найти в сети", Theme.Accent, 180);
-        var asLabel = Theme.Command("Это этикетки", Theme.Header, 170);
-        var asReceipt = Theme.Command("Это чеки", Theme.Ok, 150);
+        _printerPage = new TabPage(UiText.TabPrinters) { Padding = new Padding(16), BackColor = Theme.Bg };
+        var scan = BindButton(() => UiText.FindNetwork, Theme.Accent, 180);
+        var asLabel = BindButton(() => UiText.ThisLabels, Theme.Header, 170);
+        var asReceipt = BindButton(() => UiText.ThisReceipts, Theme.Ok, 150);
         scan.Click += async (_, _) => await ScanAsync(scan);
         asLabel.Click += (_, _) => AssignFound(true);
         asReceipt.Click += (_, _) => AssignFound(false);
@@ -139,39 +194,33 @@ internal sealed class SettingsForm : Form
         actions.Controls.Add(asLabel);
         actions.Controls.Add(asReceipt);
 
-        var addLabel = Theme.Command("IP в этикетки", Theme.Header, 180);
-        var addReceipt = Theme.Command("IP в чеки", Theme.Ok, 160);
+        var addLabel = BindButton(() => UiText.IpLabels, Theme.Header, 180);
+        var addReceipt = BindButton(() => UiText.IpReceipts, Theme.Ok, 160);
         addLabel.Click += (_, _) => AddManual(true);
         addReceipt.Click += (_, _) => AddManual(false);
         var manual = new FlowLayoutPanel { Height = 58, WrapContents = false, Padding = new Padding(0, 6, 0, 0) };
         manual.Controls.Add(addLabel);
         manual.Controls.Add(addReceipt);
 
-        var hint = new Label
-        {
-            Height = 52,
-            Font = Theme.Ui,
-            ForeColor = Theme.Muted,
-            Text = "Сначала список Windows. «Найти в сети» ищет Argox 214 Plus и чековые принтеры по IP. Найденный адрес можно назначить кнопкой. Потом нажмите Сохранить.",
-        };
+        var hint = BindLabel(() => UiText.PrinterHint, 64);
         Theme.Stack(
-            page,
-            Theme.Field("Принтер этикеток", _labelPrinter),
-            Theme.Field("Чековый принтер", _receiptPrinter),
+            _printerPage,
+            BindField(() => UiText.LabelPrinter, _labelPrinter),
+            BindField(() => UiText.ReceiptPrinter, _receiptPrinter),
             actions,
             _foundPrinters,
             _scanStatus,
-            Theme.Field("IP вручную", _manualIp),
+            BindField(() => UiText.ManualIp, _manualIp),
             manual,
             hint);
-        return page;
+        return _printerPage;
     }
 
     private TabPage BuildNumbers()
     {
-        var page = new TabPage("Номера мешков") { Padding = new Padding(16), BackColor = Theme.Bg };
-        var restart = Theme.Command("Начать сначала", Theme.Header, 200);
-        var lookup = Theme.Command("Последний номер на сервере", Theme.Accent, 280);
+        _numberPage = new TabPage(UiText.TabNumbers) { Padding = new Padding(16), BackColor = Theme.Bg };
+        var restart = BindButton(() => UiText.RestartRange, Theme.Header, 200);
+        var lookup = BindButton(() => UiText.LastOnServer, Theme.Accent, 280);
         restart.Click += (_, _) =>
         {
             _next.Text = _start.Text.Trim();
@@ -187,31 +236,25 @@ internal sealed class SettingsForm : Form
         var actions = new FlowLayoutPanel { Height = 64, Padding = new Padding(0, 12, 0, 0), WrapContents = false };
         actions.Controls.Add(restart);
         actions.Controls.Add(lookup);
-        var explain = new Label
-        {
-            Height = 48,
-            Font = Theme.Ui,
-            ForeColor = Theme.Muted,
-            Text = "Каждый принятый мешок получает следующий номер. Когда до конца остаётся 1000 номеров, программа предупреждает. В начале года здесь можно задать диапазон заново.",
-        };
+        var explain = BindLabel(() => UiText.RangeExplain, 88);
         Theme.Stack(
-            page,
-            Theme.Field("Начало", _start),
-            Theme.Field("Конец", _end),
-            Theme.Field("Следующий номер", _next),
+            _numberPage,
+            BindField(() => UiText.RangeStart, _start),
+            BindField(() => UiText.RangeEnd, _end),
+            BindField(() => UiText.RangeNext, _next),
             _rangeHint,
             actions,
             _serverHint,
             explain);
-        return page;
+        return _numberPage;
     }
 
     private TabPage BuildOperators()
     {
-        var page = new TabPage("Операторы") { Padding = new Padding(16), BackColor = Theme.Bg };
-        var add = Theme.Command("Добавить", Theme.Accent, 150);
-        var pin = Theme.Command("Сменить PIN", Theme.Header, 160);
-        var delete = Theme.Command("Удалить", Theme.Danger, 140);
+        _operatorPage = new TabPage(UiText.TabOperators) { Padding = new Padding(16), BackColor = Theme.Bg };
+        var add = BindButton(() => UiText.Add, Theme.Accent, 150);
+        var pin = BindButton(() => UiText.ChangePin, Theme.Header, 160);
+        var delete = BindButton(() => UiText.Delete, Theme.Danger, 140);
         add.Click += (_, _) => AddOperator();
         pin.Click += (_, _) => ChangePin();
         delete.Click += (_, _) => DeleteOperator();
@@ -220,9 +263,116 @@ internal sealed class SettingsForm : Form
         actions.Controls.Add(pin);
         actions.Controls.Add(delete);
         _operators.Dock = DockStyle.Fill;
-        page.Controls.Add(_operators);
-        page.Controls.Add(actions);
-        return page;
+        _operatorPage.Controls.Add(_operators);
+        _operatorPage.Controls.Add(actions);
+        return _operatorPage;
+    }
+
+    private Label BindLabel(Func<string> text, int height)
+    {
+        var label = new Label
+        {
+            Height = height,
+            Font = Theme.Ui,
+            ForeColor = Theme.Muted,
+        };
+        _bind.Add(() => label.Text = text());
+        return label;
+    }
+
+    private Button BindButton(Func<string> text, Color back, int width)
+    {
+        var button = Theme.Command(text(), back, width);
+        _bind.Add(() => button.Text = text());
+        return button;
+    }
+
+    private Panel BindField(Func<string> text, Control input, int height = 68)
+    {
+        var caption = new Label
+        {
+            AutoSize = false,
+            Height = 22,
+            Font = Theme.Small,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.BottomLeft,
+        };
+        _bind.Add(() => caption.Text = text());
+        return Theme.Field(caption, input, height);
+    }
+
+    private void PreviewLanguage()
+    {
+        if (_save is null)
+            return;
+        var code = _language.SelectedItem is LanguageItem item ? item.Code : "tr";
+        AppLanguage.Use(new AppSettings { Language = code });
+        foreach (var bind in _bind)
+            bind();
+        ReloadOperators();
+        RefreshRangeHint();
+    }
+
+    private void ChooseLogo()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = UiText.LogoTitle,
+            Filter = "PNG, JPG, BMP|*.png;*.jpg;*.jpeg;*.bmp",
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+        if (BrandLogo.TryLoad(dialog.FileName) is null)
+        {
+            MessageBox.Show(this, UiText.LogoBad, UiText.LogoTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _logoSource = dialog.FileName;
+        _logoClear = false;
+        ShowLogo(dialog.FileName);
+    }
+
+    private void ClearLogo()
+    {
+        _logoSource = "";
+        _logoClear = true;
+        ShowLogo(null);
+    }
+
+    private void ShowLogo(string? path)
+    {
+        var image = BrandLogo.TryLoad(path);
+        var previous = _logoPreview.Image;
+        _logoPreview.Image = image;
+        previous?.Dispose();
+    }
+
+    private string ResolveLogo()
+    {
+        var current = _store.GetSettings().LogoPath;
+        if (_logoClear)
+        {
+            BrandLogo.Delete(current);
+            return "";
+        }
+
+        if (_logoSource.Length > 0)
+            return BrandLogo.Import(_logoSource);
+
+        return current;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        BrandLogo.Apply(this);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        _logoPreview.Image?.Dispose();
+        base.OnFormClosed(e);
     }
 
     private void LoadValues()
@@ -230,7 +380,6 @@ internal sealed class SettingsForm : Form
         var settings = _store.GetSettings();
         _company.Text = settings.Company;
         _branch.Text = settings.Branch;
-        _language.SelectedIndex = settings.Language == "ru" ? 1 : 0;
         _host.Text = settings.Host;
         _port.Text = settings.Port.ToString(CultureInfo.InvariantCulture);
         _database.Text = settings.Database;
@@ -244,17 +393,23 @@ internal sealed class SettingsForm : Form
         FillPrinters(_labelPrinter, settings.LabelPrinter);
         FillPrinters(_receiptPrinter, settings.ReceiptPrinter);
         ReloadOperators();
+        _logoSource = "";
+        _logoClear = false;
+        ShowLogo(settings.LogoPath);
+        _language.SelectedIndex = settings.Language == "ru" ? 1 : 0;
+        foreach (var box in _bolumBoxes)
+            box.Checked = settings.IsBolumEnabled((string)box.Tag!);
         RefreshRangeHint();
     }
 
     private static void FillPrinters(ComboBox box, string selected)
     {
         box.Items.Clear();
-        box.Items.Add(new PrinterItem("", "— не выбран —"));
+        box.Items.Add(new PrinterItem("", UiText.PrinterNone));
         foreach (string printer in PrinterSettings.InstalledPrinters)
             box.Items.Add(new PrinterItem(printer, printer));
         if (PrinterAddress.TryParse(selected, out var address))
-            box.Items.Add(new PrinterItem(selected, "Сеть · " + address));
+            box.Items.Add(new PrinterItem(selected, UiText.NetworkMark + " · " + address));
         var index = IndexOfPrinter(box, selected);
         box.SelectedIndex = index >= 0 ? index : 0;
     }
@@ -266,7 +421,7 @@ internal sealed class SettingsForm : Form
         var token = _scan.Token;
         button.Enabled = false;
         _foundPrinters.Items.Clear();
-        _scanStatus.Text = "Ищу принтеры в локальной сети…";
+        _scanStatus.Text = UiText.ScanLooking;
         try
         {
             var progress = new Progress<string>(text => _scanStatus.Text = text);
@@ -275,12 +430,12 @@ internal sealed class SettingsForm : Form
                 _foundPrinters.Items.Add(printer);
             Remember(found);
             _scanStatus.Text = found.Count == 0
-                ? "В этой сети никто не ответил на порт печати. Впишите IP вручную."
-                : $"Найдено: {found.Count}. Если роль угадана верно, нажмите Сохранить.";
+                ? UiText.ScanNone
+                : UiText.ScanFound(found.Count);
         }
         catch (OperationCanceledException)
         {
-            _scanStatus.Text = "Поиск остановлен.";
+            _scanStatus.Text = UiText.ScanStopped;
         }
         finally
         {
@@ -309,12 +464,12 @@ internal sealed class SettingsForm : Form
     {
         if (_foundPrinters.SelectedItem is not NetworkPrinter printer)
         {
-            MessageBox.Show(this, "Выберите найденный принтер в списке.", "Принтеры", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, UiText.PickFoundPrinter, UiText.TabPrinters, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         AddNetwork(label ? _labelPrinter : _receiptPrinter, printer, true);
-        _scanStatus.Text = (label ? "Этикетки: " : "Чеки: ") + printer.Address + ". Нажмите Сохранить.";
+        _scanStatus.Text = UiText.PrinterAssigned(label ? UiText.ThisLabels : UiText.ThisReceipts, printer.Address.ToString());
     }
 
     private void AddManual(bool label)
@@ -322,20 +477,20 @@ internal sealed class SettingsForm : Form
         var text = _manualIp.Text.Trim();
         if (!System.Net.IPAddress.TryParse(text, out var address) || address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
         {
-            MessageBox.Show(this, "Введите IP, например 192.168.1.50.", "Принтеры", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, UiText.EnterIp, UiText.TabPrinters, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
         AddNetwork(label ? _labelPrinter : _receiptPrinter, new NetworkPrinter { Address = address }, true);
-        _scanStatus.Text = (label ? "Этикетки: " : "Чеки: ") + address + ". Нажмите Сохранить.";
+        _scanStatus.Text = UiText.PrinterAssigned(label ? UiText.ThisLabels : UiText.ThisReceipts, address.ToString());
     }
 
     private static void AddNetwork(ComboBox box, NetworkPrinter printer, bool select)
     {
         var value = PrinterAddress.Format(printer.Address);
         var caption = string.IsNullOrWhiteSpace(printer.Name)
-            ? "Сеть · " + printer.Address
-            : $"Сеть · {printer.Address} · {printer.Name.Trim()}";
+            ? UiText.NetworkMark + " · " + printer.Address
+            : $"{UiText.NetworkMark} · {printer.Address} · {printer.Name.Trim()}";
         var index = IndexOfPrinter(box, value);
         if (index < 0)
         {
@@ -377,12 +532,26 @@ internal sealed class SettingsForm : Form
     {
         if (!TryRead(out var settings, out var error))
         {
-            MessageBox.Show(this, error, "Настройки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, error, UiText.Settings, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
+        try
+        {
+            settings.LogoPath = ResolveLogo();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, UiText.LogoBad + "\n" + ex.Message, UiText.LogoTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _logoSource = "";
+        _logoClear = false;
         _store.SaveSettings(settings);
-        MessageBox.Show(this, "Настройки сохранены.", "Настройки", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        ShowLogo(settings.LogoPath);
+        BrandLogo.Publish(settings.LogoPath);
+        MessageBox.Show(this, UiText.Saved, UiText.Settings, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private bool TryRead(out AppSettings settings, out string error)
@@ -394,13 +563,13 @@ internal sealed class SettingsForm : Form
         var anyConnection = host.Length > 0 || database.Length > 0 || user.Length > 0 || _password.Text.Length > 0;
         if (anyConnection && (host.Length == 0 || database.Length == 0 || user.Length == 0))
         {
-            error = "Для базы заполните адрес, имя базы и логин.";
+            error = UiText.ConnectionFields;
             return false;
         }
 
         if (!int.TryParse(_port.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port is < 1 or > 65535)
         {
-            error = "Порт — число от 1 до 65535. Для MySQL обычно 3306.";
+            error = UiText.PortRange;
             return false;
         }
 
@@ -408,7 +577,7 @@ internal sealed class SettingsForm : Form
             || !int.TryParse(_end.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var end)
             || !int.TryParse(_next.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var next))
         {
-            error = "Проверьте начало, конец и следующий номер мешка.";
+            error = UiText.CheckBagNumbers;
             return false;
         }
 
@@ -429,6 +598,8 @@ internal sealed class SettingsForm : Form
         settings.Company = _company.Text.Trim();
         settings.Branch = _branch.Text.Trim();
         settings.Language = _language.SelectedItem is LanguageItem language ? language.Code : "tr";
+        var enabled = _bolumBoxes.Where(box => box.Checked).Select(box => (string)box.Tag!).ToArray();
+        settings.EnabledBolum = enabled.Length == 0 ? "0" : string.Join(',', enabled);
         error = "";
         return true;
     }
@@ -437,13 +608,13 @@ internal sealed class SettingsForm : Form
     {
         if (!TryRead(out var settings, out var error))
         {
-            MessageBox.Show(this, error, "Настройки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, error, UiText.Settings, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return null;
         }
 
         if (!settings.IsConfigured)
         {
-            MessageBox.Show(this, "Сначала заполните адрес, базу и логин.", "База", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, UiText.NeedConnection, UiText.TitleDb, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return null;
         }
 
@@ -458,20 +629,18 @@ internal sealed class SettingsForm : Form
 
         button.Enabled = false;
         _testResult.ForeColor = Theme.Muted;
-        _testResult.Text = "Подключаюсь...";
+        _testResult.Text = UiText.Connecting;
         try
         {
             var status = await _remote.EnsureSchemaAsync(settings);
             var table = status.CreatedTable
-                ? $"Таблицы {RemoteDb.PriemTable} не было, программа её создала. Боевая priem_ob не используется."
+                ? UiText.TableCreated(RemoteDb.PriemTable)
                 : status.AddedTrack
-                    ? $"Таблица {RemoteDb.PriemTable} есть. Колонка track_code добавлена. Боевая priem_ob не используется."
-                    : $"Запись идёт в {RemoteDb.PriemTable}. Боевая priem_ob не трогается.";
-            var client = status.ClientTableExists
-                ? "Код клиента читается из официальной таблицы client."
-                : "Таблицы client на сервере нет, код клиента проверить нельзя.";
+                    ? UiText.TrackAdded(RemoteDb.PriemTable)
+                    : UiText.TableReady(RemoteDb.PriemTable);
+            var client = status.ClientTableExists ? UiText.ClientOk : UiText.ClientMissing;
             _testResult.ForeColor = status.ClientTableExists ? Theme.Ok : Theme.Danger;
-            _testResult.Text = "Подключение есть. " + table + " " + client + " Нажмите «Сохранить», чтобы приемка пользовалась этими данными.";
+            _testResult.Text = UiText.Connected(table, client);
         }
         catch (Exception ex)
         {
@@ -491,14 +660,12 @@ internal sealed class SettingsForm : Form
             return;
 
         button.Enabled = false;
-        _serverHint.Text = "Спрашиваю сервер...";
+        _serverHint.Text = UiText.AskingServer;
         try
         {
             var max = await _remote.MaxBagNumberAsync(settings, settings.BagStart, settings.BagEnd);
             _serverHint.ForeColor = Theme.Ink;
-            _serverHint.Text = max is null
-                ? "В этом диапазоне на сервере номеров ещё нет."
-                : $"Последний номер на сервере в этом диапазоне: {max}.";
+            _serverHint.Text = max is null ? UiText.NoServerNumbers : UiText.ServerMax(max.Value);
         }
         catch (Exception ex)
         {
@@ -518,7 +685,7 @@ internal sealed class SettingsForm : Form
             || !int.TryParse(_next.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var next))
         {
             _rangeHint.ForeColor = Theme.Danger;
-            _rangeHint.Text = "Проверьте числа диапазона.";
+            _rangeHint.Text = UiText.RangeBad;
             return;
         }
 
@@ -531,9 +698,7 @@ internal sealed class SettingsForm : Form
 
         var remaining = next > end ? 0 : end - next + 1;
         _rangeHint.ForeColor = remaining <= CargoRules.LowBagWarning ? Theme.Danger : Theme.Ok;
-        _rangeHint.Text = remaining == 0
-            ? "Свободных номеров нет."
-            : $"Свободно номеров: {remaining}. Следующий мешок получит {next}.";
+        _rangeHint.Text = remaining == 0 ? UiText.RangeEmpty : UiText.RangeFree(remaining, next);
     }
 
     private void AddOperator()
@@ -544,7 +709,7 @@ internal sealed class SettingsForm : Form
         var error = _store.AddOperator(dialog.OperatorName, dialog.Level, dialog.CategoryName, dialog.Pin);
         if (error is not null)
         {
-            MessageBox.Show(this, error, "Оператор", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, error, UiText.TitleOperator, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -555,7 +720,7 @@ internal sealed class SettingsForm : Form
     {
         if (_operators.SelectedItem is not OperatorRow row)
         {
-            MessageBox.Show(this, "Выберите оператора.", "PIN", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, UiText.PickOperator, UiText.Pin, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -564,24 +729,24 @@ internal sealed class SettingsForm : Form
             return;
         var error = _store.ChangePin(row.User.Id, dialog.Pin);
         if (error is not null)
-            MessageBox.Show(this, error, "PIN", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, error, UiText.Pin, MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     private void DeleteOperator()
     {
         if (_operators.SelectedItem is not OperatorRow row)
         {
-            MessageBox.Show(this, "Выберите оператора.", "Оператор", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, UiText.PickOperator, UiText.TitleOperator, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        var confirm = MessageBox.Show(this, $"Удалить оператора {row.User.Name}?", "Оператор", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        var confirm = MessageBox.Show(this, UiText.DeleteOperator(row.User.Name), UiText.TitleOperator, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes)
             return;
         var error = _store.DeleteOperator(row.User.Id, _user.Id);
         if (error is not null)
         {
-            MessageBox.Show(this, error, "Оператор", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, error, UiText.TitleOperator, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -627,7 +792,7 @@ internal sealed class SettingsForm : Form
     {
         public OperatorRow(AppUser user) => User = user;
         public AppUser User { get; }
-        public override string ToString() => $"{User.Name}   ·   {User.AccessLevel}   ·   {User.Category}";
+        public override string ToString() => $"{User.Name}   ·   {UiText.LevelTitle(User.AccessLevel)}   ·   {UiText.CategoryTitle(User.Category)}";
     }
 }
 
@@ -639,20 +804,21 @@ internal sealed class OperatorDialog : Form
     private readonly TextBox _pin = new() { Font = Theme.Input, MaxLength = 4, UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle };
 
     public string OperatorName => _name.Text;
-    public string Level => _level.SelectedItem?.ToString() ?? "";
+    public string Level => (_level.SelectedItem as LevelItem)?.Code ?? "";
     public string CategoryName => _category.Text;
     public string Pin => _pin.Text;
 
     public OperatorDialog()
     {
-        Text = "Новый оператор";
+        Text = UiText.NewOperator;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
         ClientSize = new Size(440, 420);
         Font = Theme.Ui;
-        _level.Items.AddRange(AccessLevels.All);
+        _level.Items.Add(new LevelItem(AccessLevels.Admin));
+        _level.Items.Add(new LevelItem(AccessLevels.Operator));
         _level.SelectedIndex = 1;
         _pin.KeyPress += (_, e) =>
         {
@@ -660,13 +826,13 @@ internal sealed class OperatorDialog : Form
                 e.Handled = true;
         };
 
-        var ok = Theme.Command("Добавить", Theme.Accent, 150);
-        var cancel = Theme.Command("Отмена", Color.FromArgb(90, 104, 116), 130);
+        var ok = Theme.Command(UiText.Add, Theme.Accent, 150);
+        var cancel = Theme.Command(UiText.Cancel, Color.FromArgb(90, 104, 116), 130);
         ok.Click += (_, _) =>
         {
             if (_name.Text.Trim().Length == 0 || _category.Text.Trim().Length == 0 || !CargoRules.IsPin(_pin.Text.Trim()))
             {
-                MessageBox.Show(this, "Нужны имя, категория и PIN из четырёх цифр.", "Оператор", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, UiText.OperatorNeed, UiText.TitleOperator, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -680,10 +846,10 @@ internal sealed class OperatorDialog : Form
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(16) };
         Theme.Stack(
             body,
-            Theme.Field("Имя оператора", _name),
-            Theme.Field("Уровень доступа", _level),
-            Theme.Field("Категория", _category),
-            Theme.Field("PIN", _pin),
+            Theme.Field(UiText.OperatorName, _name),
+            Theme.Field(UiText.AccessLevel, _level),
+            Theme.Field(UiText.Category, _category),
+            Theme.Field(UiText.Pin, _pin),
             buttons);
         Controls.Add(body);
     }
@@ -714,13 +880,13 @@ internal sealed class PinDialog : Form
             };
         }
 
-        var ok = Theme.Command("Сохранить", Theme.Accent, 150);
-        var cancel = Theme.Command("Отмена", Color.FromArgb(90, 104, 116), 130);
+        var ok = Theme.Command(UiText.Save, Theme.Accent, 150);
+        var cancel = Theme.Command(UiText.Cancel, Color.FromArgb(90, 104, 116), 130);
         ok.Click += (_, _) =>
         {
             if (!CargoRules.IsPin(_pin.Text.Trim()) || _pin.Text.Trim() != _repeat.Text.Trim())
             {
-                MessageBox.Show(this, "Оба поля — один и тот же PIN из четырёх цифр.", "PIN", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, UiText.PinMismatch, UiText.Pin, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -732,7 +898,7 @@ internal sealed class PinDialog : Form
         buttons.Controls.Add(ok);
         buttons.Controls.Add(cancel);
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(16) };
-        Theme.Stack(body, Theme.Field("Новый PIN", _pin), Theme.Field("Повтор PIN", _repeat), buttons);
+        Theme.Stack(body, Theme.Field(UiText.NewPin, _pin), Theme.Field(UiText.RepeatPin, _repeat), buttons);
         Controls.Add(body);
     }
 }

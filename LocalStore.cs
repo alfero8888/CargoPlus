@@ -113,13 +113,57 @@ internal sealed class LocalStore
             AddColumn(connection, "settings", "company_name", "TEXT NOT NULL DEFAULT 'Baraka Logistic Cargo'");
             AddColumn(connection, "settings", "branch_name", "TEXT NOT NULL DEFAULT 'Kuran Hotel'");
             AddColumn(connection, "settings", "language", "TEXT NOT NULL DEFAULT 'tr'");
+            AddColumn(connection, "settings", "logo_path", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "enabled_bolum", "TEXT NOT NULL DEFAULT '1,2,3,4,6'");
+            AddColumn(connection, "bags", "office", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "bags", "operator_name", "TEXT NOT NULL DEFAULT ''");
 
             using var count = connection.CreateCommand();
             count.CommandText = "SELECT COUNT(*) FROM operators";
             var operators = Convert.ToInt32(count.ExecuteScalar(), CultureInfo.InvariantCulture);
             if (operators == 0)
                 InsertOperator(connection, "Администратор", AccessLevels.Admin, "Администрация", "0000");
+
+            KeepBagRange(connection);
         }
+    }
+
+    private void KeepBagRange(SqliteConnection connection)
+    {
+        var settings = ReadSettings(connection);
+        var start = settings.BagStart;
+        var end = settings.BagEnd;
+        var next = settings.BagNext;
+        if (BagRangeMemory.TryRead(out var remembered))
+        {
+            var freshDefaults = start == 200_000 && end == 600_000 && next == 200_000;
+            var savedRange = remembered.Start != 200_000 || remembered.End != 600_000 || remembered.Next != 200_000;
+            if (freshDefaults && savedRange)
+            {
+                start = remembered.Start;
+                end = remembered.End;
+                next = remembered.Next;
+            }
+            else
+            {
+                next = Math.Max(next, remembered.Next);
+            }
+        }
+
+        if (start != settings.BagStart || end != settings.BagEnd || next != settings.BagNext)
+            WriteBagRange(connection, null, start, end, next);
+        BagRangeMemory.Remember(start, end, next);
+    }
+
+    private static void WriteBagRange(SqliteConnection connection, SqliteTransaction? transaction, int start, int end, int next)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE settings SET bag_start = $start, bag_end = $end, bag_next = $next WHERE id = 1";
+        command.Parameters.AddWithValue("$start", start);
+        command.Parameters.AddWithValue("$end", end);
+        command.Parameters.AddWithValue("$next", next);
+        command.ExecuteNonQuery();
     }
 
     public AppSettings GetSettings()
@@ -150,6 +194,8 @@ internal sealed class LocalStore
                     company_name = $company,
                     branch_name = $branch,
                     language = $language,
+                    logo_path = $logo,
+                    enabled_bolum = $bolum,
                     bag_start = $start,
                     bag_end = $end,
                     bag_next = $next
@@ -166,10 +212,13 @@ internal sealed class LocalStore
             command.Parameters.AddWithValue("$company", settings.Company.Trim());
             command.Parameters.AddWithValue("$branch", settings.Branch.Trim());
             command.Parameters.AddWithValue("$language", settings.Language == "ru" ? "ru" : "tr");
+            command.Parameters.AddWithValue("$logo", settings.LogoPath.Trim());
+            command.Parameters.AddWithValue("$bolum", string.IsNullOrWhiteSpace(settings.EnabledBolum) ? "1,2,3,4,6" : settings.EnabledBolum.Trim());
             command.Parameters.AddWithValue("$start", settings.BagStart);
             command.Parameters.AddWithValue("$end", settings.BagEnd);
             command.Parameters.AddWithValue("$next", settings.BagNext);
             command.ExecuteNonQuery();
+            BagRangeMemory.Remember(settings.BagStart, settings.BagEnd, settings.BagNext);
         }
     }
 
@@ -237,13 +286,13 @@ internal sealed class LocalStore
         name = name.Trim();
         category = category.Trim();
         if (name.Length == 0)
-            return "Введите имя оператора.";
+            return UiText.NeedOperatorName;
         if (category.Length == 0)
-            return "Введите категорию.";
+            return UiText.NeedCategory;
         if (!AccessLevels.All.Contains(level))
-            return "Неизвестный уровень доступа.";
+            return UiText.BadLevel;
         if (!CargoRules.IsPin(pin))
-            return "PIN — четыре цифры.";
+            return UiText.PinFour;
 
         lock (_gate)
         {
@@ -254,7 +303,7 @@ internal sealed class LocalStore
             }
             catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
             {
-                return "Такое имя уже есть.";
+                return UiText.NameExists;
             }
         }
 
@@ -264,7 +313,7 @@ internal sealed class LocalStore
     public string? ChangePin(long id, string pin)
     {
         if (!CargoRules.IsPin(pin))
-            return "PIN — четыре цифры.";
+            return UiText.PinFour;
 
         lock (_gate)
         {
@@ -276,7 +325,7 @@ internal sealed class LocalStore
             command.Parameters.AddWithValue("$salt", salt);
             command.Parameters.AddWithValue("$id", id);
             if (command.ExecuteNonQuery() == 0)
-                return "Оператор не найден.";
+                return UiText.OperatorMissing;
         }
 
         return null;
@@ -285,7 +334,7 @@ internal sealed class LocalStore
     public string? DeleteOperator(long id, long currentUserId)
     {
         if (id == currentUserId)
-            return "Нельзя удалить оператора, который сейчас вошёл.";
+            return UiText.CannotDeleteSelf;
 
         lock (_gate)
         {
@@ -295,7 +344,7 @@ internal sealed class LocalStore
             read.Parameters.AddWithValue("$id", id);
             var level = read.ExecuteScalar() as string;
             if (level is null)
-                return "Оператор не найден.";
+                return UiText.OperatorMissing;
 
             if (level == AccessLevels.Admin)
             {
@@ -303,7 +352,7 @@ internal sealed class LocalStore
                 count.CommandText = "SELECT COUNT(*) FROM operators WHERE access_level = $level";
                 count.Parameters.AddWithValue("$level", AccessLevels.Admin);
                 if (Convert.ToInt32(count.ExecuteScalar(), CultureInfo.InvariantCulture) <= 1)
-                    return "Должен остаться хотя бы один главный администратор.";
+                    return UiText.NeedOneAdmin;
             }
 
             using var delete = connection.CreateCommand();
@@ -358,6 +407,53 @@ internal sealed class LocalStore
 
     public int SyncedCount() => Count("SELECT COUNT(*) FROM bags WHERE synced = 1");
 
+    public SessionInfo? GetSession(string sessionId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, kod, client_name, client_surname, client_phone, store_phone, store_name, operator_name, track_code
+                FROM sessions WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$id", sessionId);
+            using var reader = command.ExecuteReader();
+            return reader.Read() ? ReadSession(reader) : null;
+        }
+    }
+
+    public IReadOnlyList<BagRecord> SearchBags(DateTime from, DateTime to, string store, string code)
+    {
+        var start = from.Date;
+        var finish = to.Date;
+        if (finish < start)
+            (start, finish) = (finish, start);
+        var end = finish.AddDays(1);
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = BagSelect + """
+                 WHERE tarih >= $from AND tarih < $to
+                   AND ($store = '' OR store_name LIKE $store ESCAPE '\' OR store_phone LIKE $store ESCAPE '\' OR teslim_eden LIKE $store ESCAPE '\')
+                   AND ($code = '' OR CAST(kod AS TEXT) LIKE $code ESCAPE '\')
+                 ORDER BY tarih DESC
+                """;
+            command.Parameters.AddWithValue("$from", start.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$to", end.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$store", Like(store));
+            command.Parameters.AddWithValue("$code", Like(code));
+            return ReadBags(command);
+        }
+    }
+
+    private static string Like(string value)
+    {
+        var text = value.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+        return text.Length == 0 ? "" : $"%{text}%";
+    }
+
     public IReadOnlyList<BagRecord> GetBagsSince(DateTime from)
     {
         lock (_gate)
@@ -390,9 +486,11 @@ internal sealed class LocalStore
                 "Backups");
             Directory.CreateDirectory(folder);
             var path = Path.Combine(folder, $"priem-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
+            var kept = ReadSettings(connection);
             var lines = new List<string>
             {
-                "номер;код;кг;магазин;страховка;примечание;дата;трекинг;тип;телефон;название;отправлен",
+                $"#range;{kept.BagStart};{kept.BagEnd};{kept.BagNext}",
+                "номер;код;кг;магазин;страховка;примечание;дата;трекинг;тип;телефон;название;отделение;оператор;отправлен",
             };
             foreach (var bag in old)
             {
@@ -408,6 +506,8 @@ internal sealed class LocalStore
                     bag.Bolum,
                     Csv(bag.StorePhone),
                     Csv(bag.StoreName),
+                    Csv(bag.Office),
+                    Csv(bag.OperatorName),
                     bag.Synced ? "1" : "0"));
             }
 
@@ -502,7 +602,7 @@ internal sealed class LocalStore
             using var transaction = connection.BeginTransaction();
             var settings = ReadSettings(connection, transaction);
             if (settings.BagNext > settings.BagEnd)
-                throw new InvalidOperationException("Номера мешков закончились. Позовите главного администратора, чтобы задать новый диапазон.");
+                throw new InvalidOperationException(UiText.NumbersEnded);
 
             var kodId = settings.BagNext;
             var tarih = DateTime.Now;
@@ -546,9 +646,9 @@ internal sealed class LocalStore
             insert.Transaction = transaction;
             insert.CommandText = """
                 INSERT INTO bags (
-                    session_id, kodid, kod, kilo, teslim_eden, sigorta, not1, tarih, track_code, bolum, store_phone, store_name
+                    session_id, kodid, kod, kilo, teslim_eden, sigorta, not1, tarih, track_code, bolum, store_phone, store_name, office, operator_name
                 ) VALUES (
-                    $session, $kodid, $kod, $kilo, $teslim, $sigorta, $not1, $tarih, $track, $bolum, $phone, $store
+                    $session, $kodid, $kod, $kilo, $teslim, $sigorta, $not1, $tarih, $track, $bolum, $phone, $store, $office, $operator
                 );
                 SELECT last_insert_rowid();
                 """;
@@ -564,6 +664,8 @@ internal sealed class LocalStore
             insert.Parameters.AddWithValue("$bolum", bolum);
             insert.Parameters.AddWithValue("$phone", storePhone.Trim());
             insert.Parameters.AddWithValue("$store", storeName.Trim());
+            insert.Parameters.AddWithValue("$office", settings.Branch.Trim());
+            insert.Parameters.AddWithValue("$operator", user.Name.Trim());
             var localId = Convert.ToInt64(insert.ExecuteScalar(), CultureInfo.InvariantCulture);
 
             using var bump = connection.CreateCommand();
@@ -572,6 +674,7 @@ internal sealed class LocalStore
             bump.Parameters.AddWithValue("$next", kodId + 1);
             bump.ExecuteNonQuery();
             transaction.Commit();
+            BagRangeMemory.Remember(settings.BagStart, settings.BagEnd, kodId + 1);
 
             var bag = new BagRecord
             {
@@ -588,6 +691,8 @@ internal sealed class LocalStore
                 Bolum = bolum,
                 StorePhone = storePhone.Trim(),
                 StoreName = storeName.Trim(),
+                Office = settings.Branch.Trim(),
+                OperatorName = user.Name.Trim(),
                 Synced = false,
             };
             var remaining = kodId + 1 > settings.BagEnd ? 0 : settings.BagEnd - kodId;
@@ -657,7 +762,7 @@ internal sealed class LocalStore
 
     private const string BagSelect = """
         SELECT id, session_id, kodid, kod, kilo, teslim_eden, sigorta, not1, tarih, track_code, bolum,
-               store_phone, store_name, synced, sync_error
+               store_phone, store_name, synced, sync_error, office, operator_name
         FROM bags
         """;
 
@@ -682,6 +787,8 @@ internal sealed class LocalStore
                 Bolum = reader.GetString(10),
                 StorePhone = reader.GetString(11),
                 StoreName = reader.GetString(12),
+                Office = reader.FieldCount > 15 && !reader.IsDBNull(15) ? reader.GetString(15) : "",
+                OperatorName = reader.FieldCount > 16 && !reader.IsDBNull(16) ? reader.GetString(16) : "",
                 Synced = reader.GetInt32(13) != 0,
                 SyncError = reader.IsDBNull(14) ? null : reader.GetString(14),
             });
@@ -710,7 +817,7 @@ internal sealed class LocalStore
         command.CommandText = """
             SELECT mysql_host, mysql_port, mysql_database, mysql_user, mysql_password, use_ssl,
                    label_printer, receipt_printer, bag_start, bag_end, bag_next,
-                   company_name, branch_name, language
+                   company_name, branch_name, language, logo_path, enabled_bolum
             FROM settings WHERE id = 1
             """;
         using var reader = command.ExecuteReader();
@@ -746,6 +853,8 @@ internal sealed class LocalStore
             Company = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : "Baraka Logistic Cargo",
             Branch = reader.FieldCount > 12 && !reader.IsDBNull(12) ? reader.GetString(12) : "Kuran Hotel",
             Language = reader.FieldCount > 13 && !reader.IsDBNull(13) ? reader.GetString(13) : "tr",
+            LogoPath = reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : "",
+            EnabledBolum = reader.FieldCount > 15 && !reader.IsDBNull(15) ? reader.GetString(15) : "1,2,3,4,6",
         };
     }
 

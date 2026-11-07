@@ -4,8 +4,18 @@ internal static class AccessLevels
 {
     public const string Admin = "Главный администратор";
     public const string Operator = "Оператор";
+    public const string AdminCategory = "Администрация";
 
     public static readonly string[] All = [Admin, Operator];
+}
+
+internal sealed class LevelItem
+{
+    public LevelItem(string code) => Code = code;
+
+    public string Code { get; }
+
+    public override string ToString() => UiText.LevelTitle(Code);
 }
 
 internal sealed class AppUser
@@ -71,6 +81,8 @@ internal sealed class BagRecord
     public required string Bolum { get; init; }
     public required string StorePhone { get; init; }
     public required string StoreName { get; init; }
+    public string Office { get; init; } = "";
+    public string OperatorName { get; init; } = "";
     public required bool Synced { get; init; }
     public string? SyncError { get; init; }
 }
@@ -88,6 +100,16 @@ internal sealed class AppSettings
     public string Company { get; set; } = "Baraka Logistic Cargo";
     public string Branch { get; set; } = "Kuran Hotel";
     public string Language { get; set; } = "tr";
+    public string LogoPath { get; set; } = "";
+    public string EnabledBolum { get; set; } = "1,2,3,4,6";
+
+    public bool IsBolumEnabled(string code)
+    {
+        if (string.IsNullOrWhiteSpace(EnabledBolum))
+            return true;
+        return EnabledBolum.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(code);
+    }
     public int BagStart { get; set; } = 200_000;
     public int BagEnd { get; set; } = 600_000;
     public int BagNext { get; set; } = 200_000;
