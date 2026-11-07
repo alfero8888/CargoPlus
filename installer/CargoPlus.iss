@@ -5,8 +5,8 @@
 [Setup]
 AppId={{A7C3E1B4-9F2D-4C6A-8B15-6E4D2F0A91C3}
 AppName=Cargo Plus
-AppVersion=1.0.1
-AppVerName=Cargo Plus 1.0.1
+AppVersion=1.0.2
+AppVerName=Cargo Plus 1.0.2
 AppPublisher=Baraka Logistic Cargo
 DefaultDirName={localappdata}\Programs\CargoPlus
 DefaultGroupName=Cargo Plus
@@ -18,7 +18,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\CargoPlus.exe
-VersionInfoVersion=1.0.1.0
+VersionInfoVersion=1.0.2.0
 VersionInfoCompany=Baraka Logistic Cargo
 VersionInfoProductName=Cargo Plus
 VersionInfoDescription=Установщик Cargo Plus
