@@ -1,10 +1,36 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RootNamespace>CargoPlus</RootNamespace>
+    <AssemblyName>CargoPlus</AssemblyName>
+    <ApplicationTitle>Cargo Plus</ApplicationTitle>
+    <Version>1.0.0</Version>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="CargoPlus\**" />
+    <Compile Remove="obj\**" />
+    <Compile Remove="bin\**" />
+    <Content Remove="CargoPlus\**" />
+    <Content Remove="obj\**" />
+    <Content Remove="bin\**" />
+    <EmbeddedResource Remove="CargoPlus\**" />
+    <EmbeddedResource Remove="obj\**" />
+    <EmbeddedResource Remove="bin\**" />
+    <None Remove="CargoPlus\**" />
+    <None Remove="obj\**" />
+    <None Remove="bin\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
 
 </Project>
