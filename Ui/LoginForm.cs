@@ -5,23 +5,24 @@ internal sealed class LoginForm : FullScreenForm
     private readonly LocalStore _store;
     private readonly List<AppUser> _users;
     private readonly ComboBox _level = new() { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Input, Height = 36 };
-    private readonly ComboBox _category = new() { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Input, Height = 36 };
     private readonly ComboBox _name = new() { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Input, Height = 36 };
     private readonly TextBox _pin = new() { Font = Theme.Input, MaxLength = 4, UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle };
-    private readonly Panel _card = new() { Width = 500, Height = 640, BackColor = Theme.Card };
+    private readonly Panel _card = new() { Width = 520, Height = 520, BackColor = Theme.Card };
 
     private bool _closing;
+    private readonly string _savedLevel;
+    private readonly string _savedName;
     public AppUser? EnteredUser { get; private set; }
 
     public LoginForm(LocalStore store)
     {
         _store = store;
         _users = store.Operators().ToList();
+        (_savedLevel, _, _savedName) = store.LastLogin();
         var company = _store.GetSettings().Company;
         Text = UiText.WindowTitle(company);
         Build(company);
-        _level.SelectedIndexChanged += (_, _) => FillCategories();
-        _category.SelectedIndexChanged += (_, _) => FillNames();
+        _level.SelectedIndexChanged += (_, _) => FillNames();
         _pin.KeyPress += DigitsOnly;
         _pin.KeyDown += (_, e) =>
         {
@@ -31,20 +32,40 @@ internal sealed class LoginForm : FullScreenForm
             TryEnter();
         };
         FillLevels();
+        Shown += (_, _) => _pin.Focus();
     }
 
     private void Build(string company)
     {
+        var mark = new PictureBox
+        {
+            Image = BrandLogo.ProgramMark(),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Width = 56,
+            Height = 56,
+            Margin = new Padding(0, 8, 12, 0),
+        };
         var title = new Label
         {
             Text = string.IsNullOrWhiteSpace(company) ? AppRelease.Product : company.Trim(),
-            Dock = DockStyle.Top,
-            Height = 52,
+            AutoSize = false,
+            Width = 360,
+            Height = 56,
             Font = Theme.Title,
             ForeColor = Theme.Header,
-            TextAlign = ContentAlignment.BottomLeft,
+            TextAlign = ContentAlignment.MiddleLeft,
             AutoEllipsis = true,
+            Margin = new Padding(0, 8, 0, 0),
         };
+        var heading = new FlowLayoutPanel
+        {
+            Height = 72,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Dock = DockStyle.Top,
+        };
+        heading.Controls.Add(mark);
+        heading.Controls.Add(title);
         var subtitle = new Label
         {
             Text = UiText.LoginSubtitle,
@@ -79,10 +100,9 @@ internal sealed class LoginForm : FullScreenForm
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(28, 8, 28, 16) };
         Theme.Stack(
             body,
-            title,
+            heading,
             subtitle,
             Theme.Field(UiText.AccessLevel, _level),
-            Theme.Field(UiText.Category, _category),
             Theme.Field(UiText.OperatorName, _name),
             Theme.Field(UiText.Pin, _pin),
             buttons,
@@ -104,31 +124,39 @@ internal sealed class LoginForm : FullScreenForm
         _level.Items.Clear();
         foreach (var level in _users.Select(user => user.AccessLevel).Distinct())
             _level.Items.Add(new LevelItem(level));
-        if (_level.Items.Count > 0)
-            _level.SelectedIndex = 0;
-    }
-
-    private void FillCategories()
-    {
-        var level = (_level.SelectedItem as LevelItem)?.Code;
-        _category.Items.Clear();
-        foreach (var category in _users.Where(user => user.AccessLevel == level).Select(user => user.Category).Distinct())
-            _category.Items.Add(new CategoryItem(category));
-        if (_category.Items.Count > 0)
-            _category.SelectedIndex = 0;
-        else
-            FillNames();
+        SelectSaved(_level, item => item is LevelItem level && level.Code == _savedLevel);
+        FillNames();
     }
 
     private void FillNames()
     {
         var level = (_level.SelectedItem as LevelItem)?.Code;
-        var category = (_category.SelectedItem as CategoryItem)?.Value;
         _name.Items.Clear();
-        foreach (var user in _users.Where(user => user.AccessLevel == level && user.Category == category))
+        foreach (var user in _users.Where(user => user.AccessLevel == level))
             _name.Items.Add(user.Name);
-        if (_name.Items.Count > 0)
-            _name.SelectedIndex = 0;
+        SelectSaved(
+            _name,
+            item => item is string name
+                && level == _savedLevel
+                && string.Equals(name, _savedName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void SelectSaved(ComboBox box, Func<object, bool> match)
+    {
+        if (box.Items.Count == 0)
+            return;
+
+        for (var i = 0; i < box.Items.Count; i++)
+        {
+            if (match(box.Items[i]!))
+            {
+                box.SelectedIndex = i;
+                return;
+            }
+        }
+
+        if (box.SelectedIndex < 0)
+            box.SelectedIndex = 0;
     }
 
     private void TryEnter()
@@ -152,16 +180,10 @@ internal sealed class LoginForm : FullScreenForm
             return;
         }
 
+        _store.RememberLogin(user.AccessLevel, user.Category, user.Name);
         _closing = true;
         EnteredUser = user;
         Close();
-    }
-
-    private sealed class CategoryItem
-    {
-        public CategoryItem(string value) => Value = value;
-        public string Value { get; }
-        public override string ToString() => UiText.CategoryTitle(Value);
     }
 
     private static void DigitsOnly(object? sender, KeyPressEventArgs e)

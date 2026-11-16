@@ -480,3 +480,13 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Passwords: keep in the private alfero8888/secrets repo
+BuiltInConnection.cs
+web/config.php
+
+# Built installer is attached to GitHub releases
+installer/Output/
+
+# Stray template project
+CargoPlus/

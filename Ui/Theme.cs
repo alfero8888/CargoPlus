@@ -22,6 +22,7 @@ internal class FullScreenForm : Form
     {
         base.OnHandleCreated(e);
         BrandLogo.Apply(this);
+        AppTray.Attach(this);
     }
 }
 

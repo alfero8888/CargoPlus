@@ -15,12 +15,13 @@ internal sealed class SyncService : IDisposable
     private DateTime _runStart;
     private long _bytesBefore;
     private DateOnly _archivedOn;
+    private int _aligned;
 
     public SyncService(LocalStore store, RemoteDb remote)
     {
         _store = store;
         _remote = remote;
-        _timer = new System.Threading.Timer(_ => _ = RunAsync(), null, Timeout.Infinite, Timeout.Infinite);
+        _timer = new System.Threading.Timer(_ => Kick(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
     public void Start(Action<SyncState> onStatus)
@@ -29,7 +30,7 @@ internal sealed class SyncService : IDisposable
         _timer.Change(TimeSpan.Zero, TimeSpan.FromSeconds(4));
     }
 
-    public void Kick() => _ = RunAsync();
+    public void Kick() => _ = Task.Run(RunAsync);
 
     public void Dispose() => _timer.Dispose();
 
@@ -51,6 +52,18 @@ internal sealed class SyncService : IDisposable
             }
 
             var settings = _store.GetSettings();
+            if (settings.IsConfigured && Interlocked.Exchange(ref _aligned, 1) == 0)
+            {
+                try
+                {
+                    _store.AlignCounters(settings, (prefix, overflow) =>
+                        _remote.LatestLetterAsync(settings, prefix, overflow).GetAwaiter().GetResult());
+                }
+                catch (Exception)
+                {
+                }
+            }
+
             var pendingCount = _store.PendingCount();
             var synced = _store.SyncedCount();
             if (!settings.IsConfigured)
@@ -74,25 +87,108 @@ internal sealed class SyncService : IDisposable
             try
             {
                 await _remote.EnsureSchemaAsync(settings);
+                var missing = new List<uint>();
+                var looked = new Dictionary<uint, ClientInfo?>();
+                string? rejected = null;
                 foreach (var bag in pending)
                 {
                     try
                     {
-                        await _remote.InsertBagAsync(settings, bag);
-                        _store.MarkSynced(bag.LocalId);
+                        if (!_store.BagExists(bag.LocalId))
+                            continue;
+                        if (string.IsNullOrWhiteSpace(bag.KodId) || bag.KodId == "0" || bag.Kod == 0)
+                        {
+                            _store.MarkError(bag.LocalId, UiText.ZeroForbidden);
+                            continue;
+                        }
+                        if (!looked.TryGetValue(bag.Kod, out var client))
+                        {
+                            client = await _remote.FindClientAsync(settings, bag.Kod);
+                            looked[bag.Kod] = client;
+                            if (client is not null)
+                                _store.RememberClient(client);
+                        }
+
+                        if (client is null)
+                        {
+                            if (!missing.Contains(bag.Kod))
+                                missing.Add(bag.Kod);
+                            _store.MarkError(bag.LocalId, UiText.CodeMissingHold(bag.Kod));
+                            continue;
+                        }
+
+                        await _remote.InsertBagAsync(settings, bag, _store.GetItems(bag.LocalId));
+                        if (_store.BagExists(bag.LocalId))
+                            _store.MarkSynced(bag.LocalId);
+                    }
+                    catch (Exception ex) when (RemoteDb.IsLinkDown(ex))
+                    {
+                        _lastOk = null;
+                        Report(State(false, RemoteDb.Human(ex), missing));
+                        return;
+                    }
+                    catch (Exception ex) when (RemoteDb.IsLetterRejected(ex) && bag.KodId.Any(char.IsLetter))
+                    {
+                        _store.MarkError(bag.LocalId, UiText.LettersNotAccepted);
+                        continue;
+                    }
+                    catch (Exception ex) when (RemoteDb.IsDuplicate(ex))
+                    {
+                        var message = UiText.DuplicateBag(bag.KodId);
+                        _store.MarkError(bag.LocalId, message);
+                        rejected ??= bag.KodId;
                     }
                     catch (Exception ex)
                     {
                         var message = RemoteDb.Human(ex);
                         _store.MarkError(bag.LocalId, message);
                         _lastOk = null;
-                        Report(State(false, message));
+                        Report(State(false, message, missing, rejected));
+                        return;
+                    }
+                }
+
+                foreach (var bag in _store.BagsWithPendingItems())
+                {
+                    try
+                    {
+                        await _remote.ReplaceItemsAsync(settings, bag, _store.GetItems(bag.LocalId));
+                        _store.MarkItemsSynced(bag.LocalId);
+                    }
+                    catch (Exception ex) when (RemoteDb.IsLinkDown(ex))
+                    {
+                        _lastOk = null;
+                        Report(State(false, RemoteDb.Human(ex), missing));
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        var message = RemoteDb.Human(ex);
+                        _store.MarkError(bag.LocalId, message);
+                        _lastOk = null;
+                        Report(State(false, message, missing, rejected));
+                        return;
+                    }
+                }
+
+                foreach (var drop in _store.GetDrops(50))
+                {
+                    try
+                    {
+                        await _remote.DeleteBagAsync(settings, drop.KodId, drop.TrackCode);
+                        _store.ForgetDrop(drop.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        var message = RemoteDb.Human(ex);
+                        _lastOk = null;
+                        Report(State(false, message, missing));
                         return;
                     }
                 }
 
                 _lastOk = DateTime.Now;
-                Report(State(true, null));
+                Report(State(true, rejected is not null ? UiText.DuplicateBag(rejected) : null, missing, rejected));
             }
             catch (Exception ex)
             {
@@ -109,7 +205,7 @@ internal sealed class SyncService : IDisposable
         }
     }
 
-    private SyncState State(bool online, string? error) => new(
+    private SyncState State(bool online, string? error, IReadOnlyList<uint>? missing = null, string? rejected = null) => new(
         true,
         online,
         _store.PendingCount(),
@@ -117,7 +213,9 @@ internal sealed class SyncService : IDisposable
         _latencyMs,
         _kiloBytesPerSecond,
         error,
-        _lastOk);
+        _lastOk,
+        missing,
+        rejected);
 
     private void Report(SyncState state)
     {

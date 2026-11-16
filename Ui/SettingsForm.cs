@@ -22,10 +22,17 @@ internal sealed class SettingsForm : Form
         .ToArray();
     private readonly ComboBox _language = new() { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Input };
     private readonly TextBox _host = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox _priemTable = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _port = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _database = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _login = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
-    private readonly TextBox _password = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle, UseSystemPasswordChar = true };
+    private readonly TextBox _password = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
+    private readonly SecretText _hostSecret;
+    private readonly SecretText _portSecret;
+    private readonly SecretText _databaseSecret;
+    private readonly SecretText _loginSecret;
+    private readonly SecretText _passwordSecret;
+    private readonly SecretText _tableSecret;
     private readonly CheckBox _ssl = new() { Text = "Использовать SSL", AutoSize = true, Font = Theme.Ui };
     private readonly Label _testResult = new() { AutoSize = false, Height = 72, Font = Theme.Ui, ForeColor = Theme.Ink };
     private readonly ComboBox _labelPrinter = new() { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Input };
@@ -37,6 +44,9 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _start = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _end = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _next = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox _station = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle, MaxLength = 2, CharacterCasing = CharacterCasing.Upper };
+    private bool _letterEdited;
+    private bool _fillingLetter;
     private readonly Label _rangeHint = new() { AutoSize = false, Height = 48, Font = Theme.UiBold };
     private readonly Label _serverHint = new() { AutoSize = false, Height = 48, Font = Theme.Ui, ForeColor = Theme.Muted };
     private readonly ListBox _operators = new() { Font = Theme.Ui, IntegralHeight = false };
@@ -54,8 +64,18 @@ internal sealed class SettingsForm : Form
     private TabPage _firmPage = null!;
     private TabPage _dbPage = null!;
     private TabPage _printerPage = null!;
-    private TabPage _numberPage = null!;
     private TabPage _operatorPage = null!;
+    private TabPage _previewPage = null!;
+    private readonly PictureBox _labelView = new() { SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Width = 168, Height = 168 };
+    private readonly PictureBox _storeView = new() { SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Width = 168, Height = 210 };
+    private readonly PictureBox _firmView = new() { SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Width = 168, Height = 210 };
+    private readonly List<CheckBox> _printBoxes = new();
+    private readonly Dictionary<string, NumericUpDown> _printSizes = new();
+    private readonly TrackBar _receiptScale = new() { Minimum = 75, Maximum = 145, Value = 100, TickFrequency = 5, Width = 220 };
+    private readonly NumericUpDown _receiptPercent = new() { Minimum = 75, Maximum = 145, Value = 100, Width = 70 };
+    private bool _scaleSync;
+    private AppSettings _saved = new();
+    private bool _loading;
     private Button _save = null!;
     private Button _closeButton = null!;
 
@@ -64,7 +84,14 @@ internal sealed class SettingsForm : Form
         _store = store;
         _remote = remote;
         _user = user;
-        Text = UiText.WindowTitle(store.GetSettings().Company);
+        _hostSecret = new SecretText(_host);
+        _portSecret = new SecretText(_port);
+        _databaseSecret = new SecretText(_database);
+        _loginSecret = new SecretText(_login);
+        _passwordSecret = new SecretText(_password);
+        _tableSecret = new SecretText(_priemTable);
+        _saved = store.GetSettings();
+        Text = UiText.WindowTitle(_saved.Company);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -73,12 +100,17 @@ internal sealed class SettingsForm : Form
         Font = Theme.Ui;
         BackColor = Theme.Bg;
 
+        BuildFirm();
+        BuildConnection();
+        BuildPrinters();
+        BuildOperators();
+        BuildPreview();
         var tabs = new TabControl { Dock = DockStyle.Fill, Font = Theme.Ui };
-        tabs.TabPages.Add(BuildFirm());
-        tabs.TabPages.Add(BuildConnection());
-        tabs.TabPages.Add(BuildPrinters());
-        tabs.TabPages.Add(BuildNumbers());
-        tabs.TabPages.Add(BuildOperators());
+        tabs.TabPages.Add(_firmPage);
+        tabs.TabPages.Add(_dbPage);
+        tabs.TabPages.Add(_printerPage);
+        tabs.TabPages.Add(_operatorPage);
+        tabs.TabPages.Add(_previewPage);
 
         _save = Theme.Command(UiText.Save, Theme.Accent, 160);
         _closeButton = Theme.Command(UiText.Close, Color.FromArgb(90, 104, 116), 140);
@@ -92,8 +124,8 @@ internal sealed class SettingsForm : Form
             _firmPage.Text = UiText.TabFirm;
             _dbPage.Text = UiText.TabDb;
             _printerPage.Text = UiText.TabPrinters;
-            _numberPage.Text = UiText.TabNumbers;
             _operatorPage.Text = UiText.TabOperators;
+            _previewPage.Text = UiText.TabPreview;
             _ssl.Text = UiText.UseSsl;
             foreach (var box in _bolumBoxes)
                 box.Text = BolumChoice.TitleOf((string)box.Tag!);
@@ -135,10 +167,25 @@ internal sealed class SettingsForm : Form
         var preview = new Panel { Height = 96 };
         _logoPreview.Dock = DockStyle.Left;
         preview.Controls.Add(_logoPreview);
+        _branch.TextChanged += (_, _) =>
+        {
+            if (_loading || _letterEdited || _saved.StationLetterManual)
+                return;
+            _fillingLetter = true;
+            _station.Text = CargoRules.FirstStationLetter(_branch.Text);
+            _fillingLetter = false;
+        };
+        _station.TextChanged += (_, _) =>
+        {
+            if (!_loading && !_fillingLetter)
+                _letterEdited = true;
+        };
         Theme.Stack(
             _firmPage,
             BindField(() => UiText.Company, _company),
             BindField(() => UiText.Branch, _branch),
+            BindField(() => UiText.StationLetterLabel, _station),
+            BindLabel(() => UiText.StationLetterHint, 64),
             BindField(() => UiText.Language, _language),
             hint,
             toggles,
@@ -150,10 +197,22 @@ internal sealed class SettingsForm : Form
 
     private TabPage BuildConnection()
     {
-        _dbPage = new TabPage(UiText.TabDb) { Padding = new Padding(16), BackColor = Theme.Bg };
+        _dbPage = new TabPage(UiText.TabDb) { Padding = new Padding(16), BackColor = Theme.Bg, AutoScroll = true };
         var test = BindButton(() => UiText.TestConnection, Theme.Header, 260);
         test.Click += async (_, _) => await TestAsync(test);
         var host = BindField(() => UiText.ServerAddress, _host);
+        var columns = new TextBox
+        {
+            Multiline = true,
+            ReadOnly = true,
+            Height = 168,
+            Font = Theme.Small,
+            BorderStyle = BorderStyle.None,
+            BackColor = Theme.Bg,
+            Text = UiText.WrittenFieldList,
+            TabStop = false,
+        };
+        _bind.Add(() => columns.Text = UiText.WrittenFieldList);
         var port = BindField(() => UiText.Port, _port, 68);
         port.Width = 160;
         port.Dock = DockStyle.Left;
@@ -175,6 +234,9 @@ internal sealed class SettingsForm : Form
             BindField(() => UiText.LoginName, _login),
             BindField(() => UiText.Password, _password),
             sslRow,
+            BindField(() => UiText.PriemTable, _priemTable),
+            BindLabel(() => UiText.WrittenFields, 36),
+            columns,
             buttons,
             _testResult);
         return _dbPage;
@@ -216,39 +278,6 @@ internal sealed class SettingsForm : Form
         return _printerPage;
     }
 
-    private TabPage BuildNumbers()
-    {
-        _numberPage = new TabPage(UiText.TabNumbers) { Padding = new Padding(16), BackColor = Theme.Bg };
-        var restart = BindButton(() => UiText.RestartRange, Theme.Header, 200);
-        var lookup = BindButton(() => UiText.LastOnServer, Theme.Accent, 280);
-        restart.Click += (_, _) =>
-        {
-            _next.Text = _start.Text.Trim();
-            RefreshRangeHint();
-        };
-        lookup.Click += async (_, _) => await LookupServerAsync(lookup);
-        foreach (var box in new[] { _start, _end, _next })
-        {
-            box.KeyPress += DigitsOnly;
-            box.TextChanged += (_, _) => RefreshRangeHint();
-        }
-
-        var actions = new FlowLayoutPanel { Height = 64, Padding = new Padding(0, 12, 0, 0), WrapContents = false };
-        actions.Controls.Add(restart);
-        actions.Controls.Add(lookup);
-        var explain = BindLabel(() => UiText.RangeExplain, 88);
-        Theme.Stack(
-            _numberPage,
-            BindField(() => UiText.RangeStart, _start),
-            BindField(() => UiText.RangeEnd, _end),
-            BindField(() => UiText.RangeNext, _next),
-            _rangeHint,
-            actions,
-            _serverHint,
-            explain);
-        return _numberPage;
-    }
-
     private TabPage BuildOperators()
     {
         _operatorPage = new TabPage(UiText.TabOperators) { Padding = new Padding(16), BackColor = Theme.Bg };
@@ -266,6 +295,73 @@ internal sealed class SettingsForm : Form
         _operatorPage.Controls.Add(_operators);
         _operatorPage.Controls.Add(actions);
         return _operatorPage;
+    }
+
+    private TabPage BuildPreview()
+    {
+        _previewPage = new TabPage(UiText.TabPreview) { Padding = new Padding(12), BackColor = Theme.Bg, AutoScroll = true };
+        var board = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 700,
+            ColumnCount = 2,
+        };
+        board.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 196));
+        board.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        var pictures = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+        pictures.Controls.Add(BindLabel(() => UiText.PreviewLabel, 22));
+        pictures.Controls.Add(_labelView);
+        pictures.Controls.Add(BindLabel(() => UiText.PreviewStore, 22));
+        pictures.Controls.Add(_storeView);
+        pictures.Controls.Add(BindLabel(() => UiText.PreviewFirm, 22));
+        pictures.Controls.Add(_firmView);
+        var checks = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+        var scaleRow = new FlowLayoutPanel { Height = 48, WrapContents = false };
+        scaleRow.Controls.Add(_receiptScale);
+        scaleRow.Controls.Add(_receiptPercent);
+        _receiptScale.Scroll += (_, _) => SyncScale(fromTrack: true);
+        _receiptPercent.ValueChanged += (_, _) => SyncScale(fromTrack: false);
+        checks.Controls.Add(BindLabel(() => UiText.ReceiptScale, 24));
+        checks.Controls.Add(scaleRow);
+        checks.Controls.Add(BindLabel(() => UiText.PreviewHint, 64));
+        checks.Controls.Add(BindLabel(() => UiText.PreviewLabel, 24));
+        foreach (var item in PrintParts.LabelItems)
+            checks.Controls.Add(ReceiptRow(item.Key, item.Title));
+        checks.Controls.Add(BindLabel(() => UiText.PreviewReceipts, 24));
+        foreach (var item in PrintParts.ReceiptItems)
+            checks.Controls.Add(ReceiptRow(item.Key, item.Title));
+        board.Controls.Add(pictures, 0, 0);
+        board.Controls.Add(checks, 1, 0);
+        _previewPage.Controls.Add(board);
+        return _previewPage;
+    }
+
+    private CheckBox PrintBox(string key, Func<string> text)
+    {
+        var box = new CheckBox { AutoSize = true, Checked = true, Font = Theme.Ui, Tag = key, Margin = new Padding(0, 3, 0, 3) };
+        _bind.Add(() => box.Text = text());
+        box.CheckedChanged += (_, _) =>
+        {
+            if (!_loading)
+                RefreshPreview();
+        };
+        _printBoxes.Add(box);
+        return box;
+    }
+
+    private Control ReceiptRow(string key, Func<string> text)
+    {
+        var row = new FlowLayoutPanel { Height = 32, Width = 460, WrapContents = false, Margin = new Padding(0, 1, 0, 1) };
+        row.Controls.Add(PrintBox(key, text));
+        var size = new NumericUpDown { Minimum = 70, Maximum = 160, Value = 100, Width = 64, Tag = key };
+        size.ValueChanged += (_, _) =>
+        {
+            if (!_loading)
+                RefreshPreview();
+        };
+        _printSizes[key] = size;
+        row.Controls.Add(size);
+        return row;
     }
 
     private Label BindLabel(Func<string> text, int height)
@@ -303,7 +399,7 @@ internal sealed class SettingsForm : Form
 
     private void PreviewLanguage()
     {
-        if (_save is null)
+        if (_save is null || _loading)
             return;
         var code = _language.SelectedItem is LanguageItem item ? item.Code : "tr";
         AppLanguage.Use(new AppSettings { Language = code });
@@ -311,6 +407,7 @@ internal sealed class SettingsForm : Form
             bind();
         ReloadOperators();
         RefreshRangeHint();
+        RefreshPreview();
     }
 
     private void ChooseLogo()
@@ -371,24 +468,61 @@ internal sealed class SettingsForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _hostSecret.Dispose();
+        _portSecret.Dispose();
+        _databaseSecret.Dispose();
+        _loginSecret.Dispose();
+        _passwordSecret.Dispose();
+        _tableSecret.Dispose();
         _logoPreview.Image?.Dispose();
+        _labelView.Image?.Dispose();
+        _storeView.Image?.Dispose();
+        _firmView.Image?.Dispose();
         base.OnFormClosed(e);
+    }
+
+    private bool Sees(string key)
+    {
+        _ = key;
+        return true;
+    }
+
+    private void SyncScale(bool fromTrack)
+    {
+        if (_loading || _scaleSync)
+            return;
+        _scaleSync = true;
+        if (fromTrack)
+            _receiptPercent.Value = _receiptScale.Value;
+        else
+            _receiptScale.Value = (int)_receiptPercent.Value;
+        _scaleSync = false;
+        RefreshPreview();
     }
 
     private void LoadValues()
     {
+        _loading = true;
         var settings = _store.GetSettings();
+        _saved = Copy(settings);
         _company.Text = settings.Company;
         _branch.Text = settings.Branch;
-        _host.Text = settings.Host;
-        _port.Text = settings.Port.ToString(CultureInfo.InvariantCulture);
-        _database.Text = settings.Database;
-        _login.Text = settings.User;
-        _password.Text = settings.Password;
+        _hostSecret.Set(settings.Host);
+        _portSecret.Set(settings.Port.ToString(CultureInfo.InvariantCulture));
+        _databaseSecret.Set(settings.Database);
+        _tableSecret.Set(settings.PriemTable);
+        _loginSecret.Set(settings.User);
+        _passwordSecret.Set(settings.Password);
         _ssl.Checked = settings.UseSsl;
         _start.Text = settings.BagStart.ToString(CultureInfo.InvariantCulture);
         _end.Text = settings.BagEnd.ToString(CultureInfo.InvariantCulture);
         _next.Text = settings.BagNext.ToString(CultureInfo.InvariantCulture);
+        _fillingLetter = true;
+        _station.Text = settings.StationLetterManual
+            ? settings.StationLetter
+            : CargoRules.FirstStationLetter(settings.Branch);
+        _fillingLetter = false;
+        _letterEdited = false;
 
         FillPrinters(_labelPrinter, settings.LabelPrinter);
         FillPrinters(_receiptPrinter, settings.ReceiptPrinter);
@@ -397,9 +531,24 @@ internal sealed class SettingsForm : Form
         _logoClear = false;
         ShowLogo(settings.LogoPath);
         _language.SelectedIndex = settings.Language == "ru" ? 1 : 0;
+        var percent = (int)Math.Clamp(Math.Round(settings.ReceiptScale * 100f), 75, 145);
+        _scaleSync = true;
+        _receiptScale.Value = percent;
+        _receiptPercent.Value = percent;
+        _scaleSync = false;
         foreach (var box in _bolumBoxes)
             box.Checked = settings.IsBolumEnabled((string)box.Tag!);
+        var hidden = settings.PrintHide.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var box in _printBoxes)
+            box.Checked = box.Tag is string key && !hidden.Contains(key);
+        foreach (var pair in _printSizes)
+        {
+            var linePercent = (int)Math.Round(PrintParts.Scale(settings, pair.Key) * 100f);
+            pair.Value.Value = Math.Clamp(linePercent, (int)pair.Value.Minimum, (int)pair.Value.Maximum);
+        }
         RefreshRangeHint();
+        _loading = false;
+        RefreshPreview();
     }
 
     private static void FillPrinters(ComboBox box, string selected)
@@ -536,19 +685,23 @@ internal sealed class SettingsForm : Form
             return;
         }
 
-        try
+        if (Sees(OperatorRights.Firm))
         {
-            settings.LogoPath = ResolveLogo();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, UiText.LogoBad + "\n" + ex.Message, UiText.LogoTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
+            try
+            {
+                settings.LogoPath = ResolveLogo();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, UiText.LogoBad + "\n" + ex.Message, UiText.LogoTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
         }
 
         _logoSource = "";
         _logoClear = false;
         _store.SaveSettings(settings);
+        _saved = Copy(_store.GetSettings());
         ShowLogo(settings.LogoPath);
         BrandLogo.Publish(settings.LogoPath);
         MessageBox.Show(this, UiText.Saved, UiText.Settings, MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -556,53 +709,160 @@ internal sealed class SettingsForm : Form
 
     private bool TryRead(out AppSettings settings, out string error)
     {
-        settings = new AppSettings();
-        var host = _host.Text.Trim();
-        var database = _database.Text.Trim();
-        var user = _login.Text.Trim();
-        var anyConnection = host.Length > 0 || database.Length > 0 || user.Length > 0 || _password.Text.Length > 0;
+        settings = Copy(_saved);
+        error = "";
+        settings.LabelPrinter = SelectedPrinter(_labelPrinter);
+        settings.ReceiptPrinter = SelectedPrinter(_receiptPrinter);
+
+        if (Sees(OperatorRights.Firm))
+        {
+            settings.Company = _company.Text.Trim();
+            settings.Branch = _branch.Text.Trim();
+            settings.Language = _language.SelectedItem is LanguageItem language ? language.Code : "tr";
+            var enabled = _bolumBoxes.Where(box => box.Checked).Select(box => (string)box.Tag!).ToArray();
+            settings.EnabledBolum = enabled.Length == 0 ? "0" : string.Join(',', enabled);
+        }
+
+        var host = _hostSecret.Value.Trim();
+        var database = _databaseSecret.Value.Trim();
+        var user = _loginSecret.Value.Trim();
+        var anyConnection = host.Length > 0 || database.Length > 0 || user.Length > 0 || _passwordSecret.Value.Length > 0;
         if (anyConnection && (host.Length == 0 || database.Length == 0 || user.Length == 0))
         {
             error = UiText.ConnectionFields;
             return false;
         }
 
-        if (!int.TryParse(_port.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port is < 1 or > 65535)
+        if (!int.TryParse(_portSecret.Value.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port is < 1 or > 65535)
         {
             error = UiText.PortRange;
             return false;
         }
 
-        if (!int.TryParse(_start.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var start)
-            || !int.TryParse(_end.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var end)
-            || !int.TryParse(_next.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var next))
-        {
-            error = UiText.CheckBagNumbers;
-            return false;
-        }
-
-        if (!CargoRules.TryRange(start, end, next, out error))
-            return false;
-
         settings.Host = host;
         settings.Port = port;
         settings.Database = database;
         settings.User = user;
-        settings.Password = _password.Text;
+        settings.Password = _passwordSecret.Value;
         settings.UseSsl = _ssl.Checked;
-        settings.LabelPrinter = SelectedPrinter(_labelPrinter);
-        settings.ReceiptPrinter = SelectedPrinter(_receiptPrinter);
-        settings.BagStart = start;
-        settings.BagEnd = end;
-        settings.BagNext = next;
-        settings.Company = _company.Text.Trim();
-        settings.Branch = _branch.Text.Trim();
-        settings.Language = _language.SelectedItem is LanguageItem language ? language.Code : "tr";
-        var enabled = _bolumBoxes.Where(box => box.Checked).Select(box => (string)box.Tag!).ToArray();
-        settings.EnabledBolum = enabled.Length == 0 ? "0" : string.Join(',', enabled);
-        error = "";
+        settings.PriemTable = _tableSecret.Value.Trim().Length == 0 ? RemoteDb.DefaultTable : _tableSecret.Value.Trim();
+        try
+        {
+            RemoteDb.Table(settings);
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+
+        settings.ReceiptScale = (float)_receiptPercent.Value / 100f;
+        settings.PrintHide = ReadHide();
+        settings.PrintSizes = ReadSizes();
+
+        if (Sees(OperatorRights.Numbers))
+        {
+            if (!int.TryParse(_start.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var start)
+                || !int.TryParse(_end.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var end)
+                || !int.TryParse(_next.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var next))
+            {
+                error = UiText.CheckBagNumbers;
+                return false;
+            }
+
+            if (!CargoRules.TryRange(start, end, next, out error))
+                return false;
+
+            settings.BagStart = start;
+            settings.BagEnd = end;
+            settings.BagNext = next;
+        }
+
+        if (!CargoRules.TryStationLetter(_station.Text, out var station, out error))
+            return false;
+        var autoLetter = CargoRules.FirstStationLetter(settings.Branch);
+        if (!_letterEdited && !_saved.StationLetterManual)
+        {
+            settings.StationLetter = autoLetter;
+            settings.StationLetterManual = false;
+        }
+        else if (station.Length == 0 || station == autoLetter && _letterEdited)
+        {
+            settings.StationLetter = autoLetter;
+            settings.StationLetterManual = false;
+        }
+        else if (_letterEdited)
+        {
+            settings.StationLetter = station;
+            settings.StationLetterManual = station != autoLetter;
+        }
+        else
+        {
+            settings.StationLetter = _saved.StationLetter;
+            settings.StationLetterManual = true;
+        }
+
         return true;
     }
+
+    private string ReadHide() =>
+        string.Join(',', _printBoxes.Where(box => !box.Checked && box.Tag is string).Select(box => (string)box.Tag!));
+
+    private string ReadSizes() =>
+        string.Join(',', _printSizes.Select(pair => pair.Key + "=" + ((int)pair.Value.Value / 100d).ToString("0.00", CultureInfo.InvariantCulture)));
+
+    private void RefreshPreview()
+    {
+        var settings = Copy(_saved);
+        settings.ReceiptScale = (float)_receiptPercent.Value / 100f;
+        if (_company.Text.Trim().Length > 0)
+            settings.Company = _company.Text.Trim();
+        settings.Branch = _branch.Text.Trim();
+        if (_language.SelectedItem is LanguageItem language)
+            settings.Language = language.Code;
+        settings.PrintHide = ReadHide();
+        settings.PrintSizes = ReadSizes();
+        ShowPicture(_labelView, CargoPrinters.PreviewLabel(settings));
+        ShowPicture(_storeView, CargoPrinters.PreviewReceipt(settings, true));
+        ShowPicture(_firmView, CargoPrinters.PreviewReceipt(settings, false));
+    }
+
+    private static void ShowPicture(PictureBox box, Image image)
+    {
+        var previous = box.Image;
+        box.Image = image;
+        previous?.Dispose();
+    }
+
+    private static AppSettings Copy(AppSettings source) => new()
+    {
+        Host = source.Host,
+        Port = source.Port,
+        Database = source.Database,
+        User = source.User,
+        Password = source.Password,
+        UseSsl = source.UseSsl,
+        LabelPrinter = source.LabelPrinter,
+        ReceiptPrinter = source.ReceiptPrinter,
+        Company = source.Company,
+        Branch = source.Branch,
+        Language = source.Language,
+        LogoPath = source.LogoPath,
+        PriemTable = source.PriemTable,
+        EnabledBolum = source.EnabledBolum,
+        BagStart = source.BagStart,
+        BagEnd = source.BagEnd,
+        BagNext = source.BagNext,
+        StationLetter = source.StationLetter,
+        StationLetterManual = source.StationLetterManual,
+        NumbersAckEnd = source.NumbersAckEnd,
+        PrintHide = source.PrintHide,
+        PrintSizes = source.PrintSizes,
+        OperatorRights = source.OperatorRights,
+        ReceiptScale = source.ReceiptScale,
+        TelemetryMinutes = source.TelemetryMinutes,
+        TelemetryUrl = source.TelemetryUrl,
+    };
 
     private AppSettings? SettingsFromForm()
     {
@@ -633,11 +893,7 @@ internal sealed class SettingsForm : Form
         try
         {
             var status = await _remote.EnsureSchemaAsync(settings);
-            var table = status.CreatedTable
-                ? UiText.TableCreated(RemoteDb.PriemTable)
-                : status.AddedTrack
-                    ? UiText.TrackAdded(RemoteDb.PriemTable)
-                    : UiText.TableReady(RemoteDb.PriemTable);
+            var table = UiText.TableReady(RemoteDb.Table(settings));
             var client = status.ClientTableExists ? UiText.ClientOk : UiText.ClientMissing;
             _testResult.ForeColor = status.ClientTableExists ? Theme.Ok : Theme.Danger;
             _testResult.Text = UiText.Connected(table, client);
@@ -792,7 +1048,7 @@ internal sealed class SettingsForm : Form
     {
         public OperatorRow(AppUser user) => User = user;
         public AppUser User { get; }
-        public override string ToString() => $"{User.Name}   ·   {UiText.LevelTitle(User.AccessLevel)}   ·   {UiText.CategoryTitle(User.Category)}";
+        public override string ToString() => $"{User.Name}   ·   {UiText.LevelTitle(User.AccessLevel)}";
     }
 }
 
@@ -800,12 +1056,11 @@ internal sealed class OperatorDialog : Form
 {
     private readonly TextBox _name = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly ComboBox _level = new() { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Input };
-    private readonly TextBox _category = new() { Font = Theme.Input, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox _pin = new() { Font = Theme.Input, MaxLength = 4, UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle };
 
     public string OperatorName => _name.Text;
     public string Level => (_level.SelectedItem as LevelItem)?.Code ?? "";
-    public string CategoryName => _category.Text;
+    public string CategoryName => "";
     public string Pin => _pin.Text;
 
     public OperatorDialog()
@@ -815,7 +1070,7 @@ internal sealed class OperatorDialog : Form
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(440, 420);
+        ClientSize = new Size(440, 340);
         Font = Theme.Ui;
         _level.Items.Add(new LevelItem(AccessLevels.Admin));
         _level.Items.Add(new LevelItem(AccessLevels.Operator));
@@ -830,7 +1085,7 @@ internal sealed class OperatorDialog : Form
         var cancel = Theme.Command(UiText.Cancel, Color.FromArgb(90, 104, 116), 130);
         ok.Click += (_, _) =>
         {
-            if (_name.Text.Trim().Length == 0 || _category.Text.Trim().Length == 0 || !CargoRules.IsPin(_pin.Text.Trim()))
+            if (_name.Text.Trim().Length == 0 || !CargoRules.IsPin(_pin.Text.Trim()))
             {
                 MessageBox.Show(this, UiText.OperatorNeed, UiText.TitleOperator, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -848,7 +1103,6 @@ internal sealed class OperatorDialog : Form
             body,
             Theme.Field(UiText.OperatorName, _name),
             Theme.Field(UiText.AccessLevel, _level),
-            Theme.Field(UiText.Category, _category),
             Theme.Field(UiText.Pin, _pin),
             buttons);
         Controls.Add(body);

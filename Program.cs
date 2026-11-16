@@ -27,7 +27,16 @@ internal static class Program
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-            Application.ThreadException += (_, args) => CrashGuard.ShowThreadException(args.Exception);
+            Application.ThreadException += (_, args) =>
+            {
+                TelemetryLog.Add(args.Exception, "UI");
+                CrashGuard.ShowThreadException(args.Exception);
+            };
+            AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            {
+                if (args.ExceptionObject is Exception exception)
+                    TelemetryLog.Add(exception, "App");
+            };
 
             Autostart.Register();
             var store = new LocalStore();
@@ -43,12 +52,26 @@ internal static class Program
 
             try
             {
-                BrandLogo.Publish(store.GetSettings().LogoPath);
+                var settings = store.GetSettings();
+                if (string.IsNullOrWhiteSpace(settings.LogoPath))
+                {
+                    var dir = Path.GetDirectoryName(Environment.ProcessPath);
+                    var bundled = dir is null ? "" : Path.Combine(dir, "logo.png");
+                    if (File.Exists(bundled))
+                    {
+                        settings.LogoPath = BrandLogo.Import(bundled);
+                        store.SaveSettings(settings);
+                    }
+                }
+
+                BrandLogo.Publish(settings.LogoPath);
             }
             catch (Exception)
             {
             }
 
+            Application.ApplicationExit += (_, _) => AppTray.Dispose();
+            using var telemetry = new TelemetryService(store);
             Application.Run(new AppHost(store));
         }
         finally
@@ -76,12 +99,28 @@ internal sealed class AppHost : ApplicationContext
         var form = new LoginForm(_store);
         form.FormClosed += (_, _) =>
         {
-            if (form.EnteredUser is { } user)
-                ShowMain(user);
-            else
-                ExitThread();
+            var user = form.EnteredUser;
+            Later(() =>
+            {
+                if (user is not null)
+                    ShowMain(user);
+                else
+                    ExitThread();
+            });
         };
         form.Show();
+    }
+
+    private static void Later(Action next)
+    {
+        var timer = new System.Windows.Forms.Timer { Interval = 50 };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            timer.Dispose();
+            next();
+        };
+        timer.Start();
     }
 
     private void ShowMain(AppUser user)
@@ -93,6 +132,15 @@ internal sealed class AppHost : ApplicationContext
         }
         catch (Exception ex)
         {
+            try
+            {
+                var log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CargoPlus", "startup-error.txt");
+                File.WriteAllText(log, ex.ToString());
+            }
+            catch (IOException)
+            {
+            }
+
             MessageBox.Show(UiText.OpenFailed + ex.Message, "Cargo Plus", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ExitThread();
             return;
@@ -100,10 +148,14 @@ internal sealed class AppHost : ApplicationContext
 
         form.FormClosed += (_, _) =>
         {
-            if (form.LogoutRequested)
-                ShowLogin();
-            else
-                ExitThread();
+            var again = form.LogoutRequested;
+            Later(() =>
+            {
+                if (again)
+                    ShowLogin();
+                else
+                    ExitThread();
+            });
         };
         form.Show();
     }

@@ -77,6 +77,12 @@ internal sealed class LocalStore
                     track_code TEXT NOT NULL DEFAULT ''
                 );
 
+                CREATE TABLE IF NOT EXISTS bag_drops (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kodid INTEGER NOT NULL,
+                    track_code TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS bags (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -115,8 +121,48 @@ internal sealed class LocalStore
             AddColumn(connection, "settings", "language", "TEXT NOT NULL DEFAULT 'tr'");
             AddColumn(connection, "settings", "logo_path", "TEXT NOT NULL DEFAULT ''");
             AddColumn(connection, "settings", "enabled_bolum", "TEXT NOT NULL DEFAULT '1,2,3,4,6'");
+            AddColumn(connection, "settings", "priem_table", "TEXT NOT NULL DEFAULT 'priem_ob'");
+            AddColumn(connection, "settings", "last_level", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "last_category", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "last_name", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "numbers_ack_end", "INTEGER NOT NULL DEFAULT -1");
+            AddColumn(connection, "settings", "print_hide", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "operator_rights", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "receipt_scale", "REAL NOT NULL DEFAULT 1");
+            AddColumn(connection, "settings", "telemetry_minutes", "INTEGER NOT NULL DEFAULT 7");
+            AddColumn(connection, "settings", "print_sizes", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "station_letter", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "settings", "station_letter_manual", "INTEGER NOT NULL DEFAULT 0");
             AddColumn(connection, "bags", "office", "TEXT NOT NULL DEFAULT ''");
             AddColumn(connection, "bags", "operator_name", "TEXT NOT NULL DEFAULT ''");
+            using (var items = connection.CreateCommand())
+            {
+                items.CommandText = """
+                    CREATE TABLE IF NOT EXISTS bag_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bag_id INTEGER NOT NULL,
+                        kodid TEXT NOT NULL,
+                        line INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        qty TEXT NOT NULL,
+                        unit TEXT NOT NULL,
+                        synced INTEGER NOT NULL DEFAULT 0
+                    );
+                    """;
+                items.ExecuteNonQuery();
+            }
+
+            using (var counters = connection.CreateCommand())
+            {
+                counters.CommandText = """
+                    CREATE TABLE IF NOT EXISTS bag_counters (
+                        prefix TEXT PRIMARY KEY,
+                        overflow TEXT NOT NULL DEFAULT '',
+                        next INTEGER NOT NULL
+                    );
+                    """;
+                counters.ExecuteNonQuery();
+            }
 
             using var count = connection.CreateCommand();
             count.CommandText = "SELECT COUNT(*) FROM operators";
@@ -125,6 +171,7 @@ internal sealed class LocalStore
                 InsertOperator(connection, "Администратор", AccessLevels.Admin, "Администрация", "0000");
 
             KeepBagRange(connection);
+            AlignUnlocked(connection, ReadSettings(connection), null);
         }
     }
 
@@ -196,9 +243,17 @@ internal sealed class LocalStore
                     language = $language,
                     logo_path = $logo,
                     enabled_bolum = $bolum,
+                    priem_table = $table,
                     bag_start = $start,
                     bag_end = $end,
-                    bag_next = $next
+                    bag_next = $next,
+                    print_hide = $hide,
+                    operator_rights = $rights,
+                    receipt_scale = $scale,
+                    telemetry_minutes = $telemetry,
+                    print_sizes = $sizes,
+                    station_letter = $station,
+                    station_letter_manual = $stationManual
                 WHERE id = 1
                 """;
             command.Parameters.AddWithValue("$host", settings.Host.Trim());
@@ -214,11 +269,20 @@ internal sealed class LocalStore
             command.Parameters.AddWithValue("$language", settings.Language == "ru" ? "ru" : "tr");
             command.Parameters.AddWithValue("$logo", settings.LogoPath.Trim());
             command.Parameters.AddWithValue("$bolum", string.IsNullOrWhiteSpace(settings.EnabledBolum) ? "1,2,3,4,6" : settings.EnabledBolum.Trim());
+            command.Parameters.AddWithValue("$table", RemoteDb.Table(settings));
             command.Parameters.AddWithValue("$start", settings.BagStart);
             command.Parameters.AddWithValue("$end", settings.BagEnd);
             command.Parameters.AddWithValue("$next", settings.BagNext);
+            command.Parameters.AddWithValue("$hide", settings.PrintHide.Trim());
+            command.Parameters.AddWithValue("$rights", settings.OperatorRights.Trim());
+            command.Parameters.AddWithValue("$scale", settings.ReceiptScale);
+            command.Parameters.AddWithValue("$sizes", settings.PrintSizes ?? "");
+            command.Parameters.AddWithValue("$telemetry", settings.TelemetryMinutes);
+            command.Parameters.AddWithValue("$station", (settings.StationLetter ?? "").Trim().ToUpperInvariant());
+            command.Parameters.AddWithValue("$stationManual", settings.StationLetterManual ? 1 : 0);
             command.ExecuteNonQuery();
             BagRangeMemory.Remember(settings.BagStart, settings.BagEnd, settings.BagNext);
+            AlignUnlocked(connection, ReadSettings(connection), null);
         }
     }
 
@@ -243,6 +307,41 @@ internal sealed class LocalStore
             }
 
             return list;
+        }
+    }
+
+    public (string Level, string Category, string Name) LastLogin()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT last_level, last_category, last_name FROM settings WHERE id = 1";
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+                return ("", "", "");
+            return (
+                reader.IsDBNull(0) ? "" : reader.GetString(0),
+                reader.IsDBNull(1) ? "" : reader.GetString(1),
+                reader.IsDBNull(2) ? "" : reader.GetString(2));
+        }
+    }
+
+    public void RememberLogin(string level, string category, string name)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE settings
+                SET last_level = $level, last_category = $category, last_name = $name
+                WHERE id = 1
+                """;
+            command.Parameters.AddWithValue("$level", level.Trim());
+            command.Parameters.AddWithValue("$category", category.Trim());
+            command.Parameters.AddWithValue("$name", name.Trim());
+            command.ExecuteNonQuery();
         }
     }
 
@@ -287,8 +386,6 @@ internal sealed class LocalStore
         category = category.Trim();
         if (name.Length == 0)
             return UiText.NeedOperatorName;
-        if (category.Length == 0)
-            return UiText.NeedCategory;
         if (!AccessLevels.All.Contains(level))
             return UiText.BadLevel;
         if (!CargoRules.IsPin(pin))
@@ -375,7 +472,21 @@ internal sealed class LocalStore
                 FROM sessions WHERE closed = 0 ORDER BY opened_at DESC LIMIT 1
                 """;
             using var reader = command.ExecuteReader();
-            return reader.Read() ? ReadSession(reader) : null;
+            if (!reader.Read())
+                return null;
+            var session = ReadSession(reader);
+            reader.Close();
+            using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM bags WHERE session_id = $id";
+            count.Parameters.AddWithValue("$id", session.Id);
+            if (Convert.ToInt32(count.ExecuteScalar(), CultureInfo.InvariantCulture) > 0)
+                return session;
+
+            using var close = connection.CreateCommand();
+            close.CommandText = "UPDATE sessions SET closed = 1 WHERE id = $id";
+            close.Parameters.AddWithValue("$id", session.Id);
+            close.ExecuteNonQuery();
+            return null;
         }
     }
 
@@ -387,6 +498,17 @@ internal sealed class LocalStore
             using var command = connection.CreateCommand();
             command.CommandText = BagSelect + " WHERE session_id = $id ORDER BY id";
             command.Parameters.AddWithValue("$id", sessionId);
+            return ReadBags(command);
+        }
+    }
+
+    public IReadOnlyList<BagRecord> UnsyncedBags()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = BagSelect + " WHERE synced = 0 ORDER BY tarih";
             return ReadBags(command);
         }
     }
@@ -490,8 +612,15 @@ internal sealed class LocalStore
             var lines = new List<string>
             {
                 $"#range;{kept.BagStart};{kept.BagEnd};{kept.BagNext}",
-                "номер;код;кг;магазин;страховка;примечание;дата;трекинг;тип;телефон;название;отделение;оператор;отправлен",
             };
+            foreach (var counter in ReadCounters(connection))
+                lines.Add($"#counter;{counter.Prefix};{counter.Overflow};{counter.Next}");
+            foreach (var bag in old)
+            {
+                foreach (var item in ReadItems(connection, null, bag.LocalId))
+                    lines.Add(string.Join(';', "#item", bag.KodId, item.Line.ToString(CultureInfo.InvariantCulture), Csv(item.Name), item.Qty, item.Unit));
+            }
+            lines.Add("номер;код;кг;магазин;страховка;примечание;дата;трекинг;тип;телефон;название;отделение;оператор;отправлен");
             foreach (var bag in old)
             {
                 lines.Add(string.Join(';',
@@ -512,6 +641,14 @@ internal sealed class LocalStore
             }
 
             File.WriteAllLines(path, lines);
+
+            using var deleteItems = connection.CreateCommand();
+            deleteItems.CommandText = """
+                DELETE FROM bag_items
+                WHERE bag_id IN (SELECT id FROM bags WHERE synced = 1 AND tarih < $cutoff)
+                """;
+            deleteItems.Parameters.AddWithValue("$cutoff", cutoffText);
+            deleteItems.ExecuteNonQuery();
 
             using var deleteBags = connection.CreateCommand();
             deleteBags.CommandText = "DELETE FROM bags WHERE synced = 1 AND tarih < $cutoff";
@@ -547,6 +684,81 @@ internal sealed class LocalStore
         return text.Contains(';') || text.Contains('"') || text.Contains('\n') ? $"\"{text}\"" : text;
     }
 
+    public bool BagExists(long localId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM bags WHERE id = $id";
+            command.Parameters.AddWithValue("$id", localId);
+            return command.ExecuteScalar() is not null;
+        }
+    }
+
+    public void RemoveBags(IReadOnlyList<BagRecord> bags)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var transaction = connection.BeginTransaction();
+            foreach (var bag in bags)
+            {
+                using var drop = connection.CreateCommand();
+                drop.Transaction = transaction;
+                drop.CommandText = "INSERT INTO bag_drops (kodid, track_code) VALUES ($kodid, $track)";
+                drop.Parameters.AddWithValue("$kodid", bag.KodId);
+                drop.Parameters.AddWithValue("$track", bag.TrackCode);
+                drop.ExecuteNonQuery();
+
+                using var deleteItems = connection.CreateCommand();
+                deleteItems.Transaction = transaction;
+                deleteItems.CommandText = "DELETE FROM bag_items WHERE bag_id = $id";
+                deleteItems.Parameters.AddWithValue("$id", bag.LocalId);
+                deleteItems.ExecuteNonQuery();
+
+                using var delete = connection.CreateCommand();
+                delete.Transaction = transaction;
+                delete.CommandText = "DELETE FROM bags WHERE id = $id";
+                delete.Parameters.AddWithValue("$id", bag.LocalId);
+                delete.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+    }
+
+    public IReadOnlyList<BagDrop> GetDrops(int limit)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT id, kodid, track_code FROM bag_drops ORDER BY id LIMIT $limit";
+            command.Parameters.AddWithValue("$limit", limit);
+            using var reader = command.ExecuteReader();
+            var list = new List<BagDrop>();
+            while (reader.Read())
+            {
+                list.Add(new BagDrop(reader.GetInt64(0), Cell(reader, 1), reader.GetString(2)));
+            }
+
+            return list;
+        }
+    }
+
+    public void ForgetDrop(long id)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM bag_drops WHERE id = $id";
+            command.Parameters.AddWithValue("$id", id);
+            command.ExecuteNonQuery();
+        }
+    }
+
     public void MarkSynced(long localId)
     {
         lock (_gate)
@@ -556,6 +768,238 @@ internal sealed class LocalStore
             command.CommandText = "UPDATE bags SET synced = 1, sync_error = NULL WHERE id = $id";
             command.Parameters.AddWithValue("$id", localId);
             command.ExecuteNonQuery();
+            using var items = connection.CreateCommand();
+            items.CommandText = "UPDATE bag_items SET synced = 1 WHERE bag_id = $id";
+            items.Parameters.AddWithValue("$id", localId);
+            items.ExecuteNonQuery();
+        }
+    }
+
+    public void MarkItemsSynced(long localId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE bag_items SET synced = 1 WHERE bag_id = $id";
+            command.Parameters.AddWithValue("$id", localId);
+            command.ExecuteNonQuery();
+            using var clear = connection.CreateCommand();
+            clear.CommandText = "UPDATE bags SET sync_error = NULL WHERE id = $id AND synced = 1";
+            clear.Parameters.AddWithValue("$id", localId);
+            clear.ExecuteNonQuery();
+        }
+    }
+
+    public IReadOnlyList<BagItem> GetItems(long bagId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            return ReadItems(connection, null, bagId);
+        }
+    }
+
+    public IReadOnlyList<string[]> ExportItemRows()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT b.kodid, i.line, i.name, i.qty, i.unit, b.track_code, b.tarih, b.bolum
+                FROM bag_items i
+                JOIN bags b ON b.id = i.bag_id
+                ORDER BY b.tarih, b.kodid, i.line
+                """;
+            using var reader = command.ExecuteReader();
+            var rows = new List<string[]>();
+            while (reader.Read())
+            {
+                rows.Add(
+                [
+                    Cell(reader, 0),
+                    reader.GetInt32(1).ToString(CultureInfo.InvariantCulture),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.GetString(4),
+                    reader.GetString(5),
+                    reader.GetString(6),
+                    reader.GetString(7),
+                ]);
+            }
+
+            return rows;
+        }
+    }
+
+    public IReadOnlyList<string> RecentItemNames()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT name FROM bag_items
+                GROUP BY name COLLATE NOCASE
+                ORDER BY MAX(id) DESC
+                LIMIT 500
+                """;
+            using var reader = command.ExecuteReader();
+            var names = new List<string>();
+            while (reader.Read())
+                names.Add(reader.GetString(0));
+            return names;
+        }
+    }
+
+    public void ReplaceItems(long bagId, string kodId, IReadOnlyList<BagItem> items)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var transaction = connection.BeginTransaction();
+            using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM bag_items WHERE bag_id = $id";
+            delete.Parameters.AddWithValue("$id", bagId);
+            delete.ExecuteNonQuery();
+            WriteItems(connection, transaction, bagId, kodId, items);
+            transaction.Commit();
+        }
+    }
+
+    public IReadOnlyList<BagRecord> BagsWithPendingItems()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = BagSelect + """
+                 WHERE synced = 1 AND id IN (SELECT bag_id FROM bag_items WHERE synced = 0)
+                 ORDER BY id
+                 LIMIT 30
+                """;
+            return ReadBags(command);
+        }
+    }
+
+    private static void WriteItems(SqliteConnection connection, SqliteTransaction transaction, long bagId, string kodId, IReadOnlyList<BagItem>? items)
+    {
+        if (items is null || items.Count == 0)
+            return;
+        var line = 1;
+        foreach (var item in items.Take(CargoRules.ItemLineMax))
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO bag_items (bag_id, kodid, line, name, qty, unit, synced)
+                VALUES ($bag, $kodid, $line, $name, $qty, $unit, 0)
+                """;
+            command.Parameters.AddWithValue("$bag", bagId);
+            command.Parameters.AddWithValue("$kodid", kodId);
+            command.Parameters.AddWithValue("$line", line);
+            command.Parameters.AddWithValue("$name", item.Name.Trim());
+            command.Parameters.AddWithValue("$qty", item.Qty);
+            command.Parameters.AddWithValue("$unit", CargoRules.ItemUnit(item.Unit));
+            command.ExecuteNonQuery();
+            line++;
+        }
+    }
+
+    private static List<BagItem> ReadItems(SqliteConnection connection, SqliteTransaction? transaction, long bagId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT line, name, qty, unit FROM bag_items WHERE bag_id = $id ORDER BY line";
+        command.Parameters.AddWithValue("$id", bagId);
+        using var reader = command.ExecuteReader();
+        var list = new List<BagItem>();
+        while (reader.Read())
+        {
+            list.Add(new BagItem
+            {
+                Line = reader.GetInt32(0),
+                Name = reader.GetString(1),
+                Qty = reader.GetString(2),
+                Unit = reader.GetString(3),
+            });
+        }
+
+        return list;
+    }
+
+    public void AcknowledgeNumbers(int bagEnd)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE settings SET numbers_ack_end = $end WHERE id = 1";
+            command.Parameters.AddWithValue("$end", bagEnd);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    public void RememberClient(ClientInfo client)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE sessions
+                SET client_name = $name, client_surname = $surname, client_phone = $phone
+                WHERE kod = $kod AND TRIM(client_name) = ''
+                """;
+            command.Parameters.AddWithValue("$name", client.Name);
+            command.Parameters.AddWithValue("$surname", client.Surname);
+            command.Parameters.AddWithValue("$phone", client.Phone);
+            command.Parameters.AddWithValue("$kod", client.Kod);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    public void ReplaceUnsyncedCode(uint oldKod, ClientInfo client, string note)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var transaction = connection.BeginTransaction();
+            using var sessions = connection.CreateCommand();
+            sessions.Transaction = transaction;
+            sessions.CommandText = """
+                UPDATE sessions
+                SET kod = $kod, client_name = $name, client_surname = $surname, client_phone = $phone
+                WHERE kod = $old AND id IN (SELECT session_id FROM bags WHERE synced = 0 AND kod = $old)
+                """;
+            sessions.Parameters.AddWithValue("$kod", client.Kod);
+            sessions.Parameters.AddWithValue("$name", client.Name);
+            sessions.Parameters.AddWithValue("$surname", client.Surname);
+            sessions.Parameters.AddWithValue("$phone", client.Phone);
+            sessions.Parameters.AddWithValue("$old", oldKod);
+            sessions.ExecuteNonQuery();
+
+            using var bags = connection.CreateCommand();
+            bags.Transaction = transaction;
+            bags.CommandText = """
+                UPDATE bags
+                SET kod = $kod,
+                    sync_error = NULL,
+                    not1 = CASE
+                        WHEN not1 IS NULL OR TRIM(not1) = '' OR not1 = '0' THEN $note
+                        WHEN INSTR(not1, $note) > 0 THEN not1
+                        WHEN LENGTH(not1) + 3 + LENGTH($note) <= 100 THEN not1 || ' | ' || $note
+                        ELSE $note
+                    END
+                WHERE synced = 0 AND kod = $old
+                """;
+            bags.Parameters.AddWithValue("$kod", client.Kod);
+            bags.Parameters.AddWithValue("$note", note);
+            bags.Parameters.AddWithValue("$old", oldKod);
+            bags.ExecuteNonQuery();
+            transaction.Commit();
         }
     }
 
@@ -565,7 +1009,7 @@ internal sealed class LocalStore
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
-            command.CommandText = "UPDATE bags SET sync_error = $error WHERE id = $id AND synced = 0";
+            command.CommandText = "UPDATE bags SET sync_error = $error WHERE id = $id";
             command.Parameters.AddWithValue("$error", error);
             command.Parameters.AddWithValue("$id", localId);
             command.ExecuteNonQuery();
@@ -594,17 +1038,22 @@ internal sealed class LocalStore
         string bolum,
         int sigorta,
         string not1,
-        string kilo)
+        string kilo,
+        IReadOnlyList<BagItem>? items = null)
     {
         lock (_gate)
         {
             using var connection = Open();
             using var transaction = connection.BeginTransaction();
             var settings = ReadSettings(connection, transaction);
-            if (settings.BagNext > settings.BagEnd)
-                throw new InvalidOperationException(UiText.NumbersEnded);
+            if (client.Kod == 0)
+                throw new InvalidOperationException(UiText.ZeroForbidden);
 
-            var kodId = settings.BagNext;
+            var station = CargoRules.FirstStationLetter(settings.Branch);
+            var written = (settings.StationLetter ?? "").Trim().ToUpperInvariant();
+            if (written.Length is 1 or 2)
+                station = written;
+            var kodId = TakeLetterNumber(connection, transaction, station, bolum);
             var tarih = DateTime.Now;
             var tarihText = tarih.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
             var track = session?.TrackCode;
@@ -667,14 +1116,10 @@ internal sealed class LocalStore
             insert.Parameters.AddWithValue("$office", settings.Branch.Trim());
             insert.Parameters.AddWithValue("$operator", user.Name.Trim());
             var localId = Convert.ToInt64(insert.ExecuteScalar(), CultureInfo.InvariantCulture);
+            WriteItems(connection, transaction, localId, kodId, items);
 
-            using var bump = connection.CreateCommand();
-            bump.Transaction = transaction;
-            bump.CommandText = "UPDATE settings SET bag_next = $next WHERE id = 1";
-            bump.Parameters.AddWithValue("$next", kodId + 1);
-            bump.ExecuteNonQuery();
             transaction.Commit();
-            BagRangeMemory.Remember(settings.BagStart, settings.BagEnd, kodId + 1);
+            BagCounterMemory.Remember(ReadCounters(connection));
 
             var bag = new BagRecord
             {
@@ -695,7 +1140,7 @@ internal sealed class LocalStore
                 OperatorName = user.Name.Trim(),
                 Synced = false,
             };
-            var remaining = kodId + 1 > settings.BagEnd ? 0 : settings.BagEnd - kodId;
+            var remaining = settings.Remaining;
             return new AddBagResult(sessionInfo, bag, remaining);
         }
     }
@@ -776,7 +1221,7 @@ internal sealed class LocalStore
             {
                 LocalId = reader.GetInt64(0),
                 SessionId = reader.GetString(1),
-                KodId = reader.GetInt32(2),
+                KodId = Cell(reader, 2),
                 Kod = (uint)reader.GetInt64(3),
                 Kilo = reader.GetString(4),
                 TeslimEden = reader.GetString(5),
@@ -817,12 +1262,18 @@ internal sealed class LocalStore
         command.CommandText = """
             SELECT mysql_host, mysql_port, mysql_database, mysql_user, mysql_password, use_ssl,
                    label_printer, receipt_printer, bag_start, bag_end, bag_next,
-                   company_name, branch_name, language, logo_path, enabled_bolum
+                   company_name, branch_name, language, logo_path, enabled_bolum, priem_table, numbers_ack_end,
+                   print_hide, operator_rights, receipt_scale, telemetry_minutes, print_sizes, station_letter,
+                   station_letter_manual
             FROM settings WHERE id = 1
             """;
         using var reader = command.ExecuteReader();
         if (!reader.Read())
-            return new AppSettings();
+        {
+            var fresh = new AppSettings();
+            BuiltInConnection.Apply(fresh);
+            return fresh;
+        }
 
         var password = "";
         if (!reader.IsDBNull(4))
@@ -837,7 +1288,7 @@ internal sealed class LocalStore
             }
         }
 
-        return new AppSettings
+        var settings = new AppSettings
         {
             Host = reader.GetString(0),
             Port = reader.GetInt32(1),
@@ -855,7 +1306,205 @@ internal sealed class LocalStore
             Language = reader.FieldCount > 13 && !reader.IsDBNull(13) ? reader.GetString(13) : "tr",
             LogoPath = reader.FieldCount > 14 && !reader.IsDBNull(14) ? reader.GetString(14) : "",
             EnabledBolum = reader.FieldCount > 15 && !reader.IsDBNull(15) ? reader.GetString(15) : "1,2,3,4,6",
+            PriemTable = reader.FieldCount > 16 && !reader.IsDBNull(16) && reader.GetString(16).Trim().Length > 0
+                ? reader.GetString(16).Trim()
+                : "priem_ob",
+            NumbersAckEnd = reader.FieldCount > 17 && !reader.IsDBNull(17) ? reader.GetInt32(17) : -1,
+            PrintHide = reader.FieldCount > 18 && !reader.IsDBNull(18) ? reader.GetString(18) : "",
+            OperatorRights = reader.FieldCount > 19 && !reader.IsDBNull(19) ? reader.GetString(19) : "",
+            ReceiptScale = reader.FieldCount > 20 && !reader.IsDBNull(20) ? (float)reader.GetDouble(20) : 1f,
+            TelemetryMinutes = reader.FieldCount > 21 && !reader.IsDBNull(21) ? reader.GetInt32(21) : 7,
+            PrintSizes = reader.FieldCount > 22 && !reader.IsDBNull(22) ? reader.GetString(22) : "",
+            StationLetter = reader.FieldCount > 23 && !reader.IsDBNull(23) ? reader.GetString(23).Trim().ToUpperInvariant() : "",
+            StationLetterManual = reader.FieldCount > 24 && !reader.IsDBNull(24) && reader.GetInt32(24) != 0,
         };
+        var autoLetter = CargoRules.FirstStationLetter(settings.Branch);
+        if (settings.StationLetter.Length is < 1 or > 2)
+        {
+            settings.StationLetter = autoLetter;
+            settings.StationLetterManual = false;
+        }
+        else if (!settings.StationLetterManual && settings.StationLetter != autoLetter)
+        {
+            settings.StationLetterManual = true;
+        }
+        else if (!settings.StationLetterManual)
+        {
+            settings.StationLetter = autoLetter;
+        }
+
+        BuiltInConnection.Apply(settings);
+        return settings;
+    }
+
+    public void AlignCounters(AppSettings settings, Func<string, string, string?>? serverLatest)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            AlignUnlocked(connection, settings, serverLatest);
+        }
+    }
+
+    private static void AlignUnlocked(SqliteConnection connection, AppSettings settings, Func<string, string, string?>? serverLatest)
+    {
+        var letter = (settings.StationLetter ?? "").Trim().ToUpperInvariant();
+        if (letter.Length is < 1 or > 2)
+            letter = CargoRules.FirstStationLetter(settings.Branch);
+
+        using (var transaction = connection.BeginTransaction())
+        {
+            foreach (var choice in BolumChoice.All)
+            {
+                var prefix = letter + BolumChoice.Letter(choice.Code);
+                var best = Best(ReadOne(connection, transaction, prefix), FromBags(connection, transaction, prefix), FromFile(prefix));
+                if (serverLatest is not null)
+                {
+                    var remote = ParseIssued(prefix, serverLatest(prefix, best.Overflow));
+                    best = Higher(best, remote);
+                    if (best.Next > 999999)
+                    {
+                        var rolled = Roll(best);
+                        var nextRemote = ParseIssued(prefix, serverLatest(prefix, rolled.Overflow));
+                        best = Higher(rolled, nextRemote);
+                    }
+                }
+
+                if (best.Next > 999999)
+                    best = Roll(best);
+                WriteCounter(connection, transaction, best);
+            }
+
+            transaction.Commit();
+            BagCounterMemory.Remember(ReadCounters(connection));
+        }
+    }
+
+    private static string TakeLetterNumber(SqliteConnection connection, SqliteTransaction transaction, string station, string bolum)
+    {
+        var prefix = station.Trim().ToUpperInvariant() + BolumChoice.Letter(bolum);
+        var current = ReadOne(connection, transaction, prefix);
+        if (current.Next < 1)
+            current = current with { Next = 1 };
+        if (current.Next > 999999)
+            current = Roll(current);
+        var issued = prefix + current.Overflow + current.Next.ToString(CultureInfo.InvariantCulture);
+        WriteCounter(connection, transaction, current with { Next = current.Next + 1 });
+        return issued;
+    }
+
+    private static BagCounterMemory.Counter Best(params BagCounterMemory.Counter[] items)
+    {
+        var best = items[0];
+        for (var i = 1; i < items.Length; i++)
+            best = Higher(best, items[i]);
+        return best;
+    }
+
+    private static BagCounterMemory.Counter Higher(BagCounterMemory.Counter left, BagCounterMemory.Counter right)
+    {
+        var overflow = string.Compare(left.Overflow, right.Overflow, StringComparison.Ordinal);
+        if (overflow > 0 || (overflow == 0 && left.Next >= right.Next))
+            return left;
+        return right;
+    }
+
+    private static BagCounterMemory.Counter Roll(BagCounterMemory.Counter counter)
+    {
+        var overflow = counter.Overflow ?? "";
+        var mark = overflow.Length == 0 ? 'A' : (char)(overflow[0] + 1);
+        if (mark > 'Z')
+            throw new InvalidOperationException(UiText.NumbersEnded);
+        return counter with { Overflow = mark.ToString(), Next = 1 };
+    }
+
+    private static BagCounterMemory.Counter FromFile(string prefix)
+    {
+        foreach (var counter in BagCounterMemory.Read())
+        {
+            if (string.Equals(counter.Prefix, prefix, StringComparison.Ordinal))
+                return counter.Next < 1 ? counter with { Next = 1, Overflow = counter.Overflow ?? "" } : counter with { Overflow = counter.Overflow ?? "" };
+        }
+
+        return new BagCounterMemory.Counter(prefix, "", 1);
+    }
+
+    private static BagCounterMemory.Counter FromBags(SqliteConnection connection, SqliteTransaction transaction, string prefix)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT kodid FROM bags WHERE CAST(kodid AS TEXT) LIKE $prefix";
+        command.Parameters.AddWithValue("$prefix", prefix + "%");
+        using var reader = command.ExecuteReader();
+        var best = new BagCounterMemory.Counter(prefix, "", 1);
+        while (reader.Read())
+            best = Higher(best, ParseIssued(prefix, Cell(reader, 0)));
+        return best;
+    }
+
+    private static BagCounterMemory.Counter ParseIssued(string prefix, string? kodId)
+    {
+        var fresh = new BagCounterMemory.Counter(prefix, "", 1);
+        var text = (kodId ?? "").Trim().ToUpperInvariant();
+        if (!text.StartsWith(prefix, StringComparison.Ordinal) || text.Length <= prefix.Length)
+            return fresh;
+        var tail = text[prefix.Length..];
+        var overflow = "";
+        if (char.IsLetter(tail[0]))
+        {
+            overflow = tail[..1];
+            tail = tail[1..];
+        }
+
+        if (tail.Length is < 1 or > 6 || tail.Any(ch => !char.IsDigit(ch)))
+            return fresh;
+        if (!int.TryParse(tail, NumberStyles.None, CultureInfo.InvariantCulture, out var number) || number is < 1 or > 999999)
+            return fresh;
+        return new BagCounterMemory.Counter(prefix, overflow, number + 1);
+    }
+
+    private static BagCounterMemory.Counter ReadOne(SqliteConnection connection, SqliteTransaction? transaction, string prefix)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT prefix, overflow, next FROM bag_counters WHERE prefix = $prefix";
+        command.Parameters.AddWithValue("$prefix", prefix);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return new BagCounterMemory.Counter(prefix, "", 1);
+        return new BagCounterMemory.Counter(reader.GetString(0), reader.GetString(1), reader.GetInt32(2));
+    }
+
+    private static void WriteCounter(SqliteConnection connection, SqliteTransaction? transaction, BagCounterMemory.Counter counter)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO bag_counters (prefix, overflow, next) VALUES ($prefix, $overflow, $next)
+            ON CONFLICT(prefix) DO UPDATE SET overflow = $overflow, next = $next
+            """;
+        command.Parameters.AddWithValue("$prefix", counter.Prefix);
+        command.Parameters.AddWithValue("$overflow", counter.Overflow);
+        command.Parameters.AddWithValue("$next", counter.Next);
+        command.ExecuteNonQuery();
+    }
+
+    private static List<BagCounterMemory.Counter> ReadCounters(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT prefix, overflow, next FROM bag_counters ORDER BY prefix";
+        using var reader = command.ExecuteReader();
+        var list = new List<BagCounterMemory.Counter>();
+        while (reader.Read())
+            list.Add(new BagCounterMemory.Counter(reader.GetString(0), reader.GetString(1), reader.GetInt32(2)));
+        return list;
+    }
+
+    private static string Cell(SqliteDataReader reader, int index)
+    {
+        if (reader.IsDBNull(index))
+            return "";
+        return reader.GetValue(index)?.ToString() ?? "";
     }
 
     private static void AddColumn(SqliteConnection connection, string table, string column, string definition)

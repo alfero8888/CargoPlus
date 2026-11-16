@@ -19,7 +19,7 @@ internal static class Code128
         "114131", "311141", "411131", "211412", "211214", "211232", "2331112",
     ];
 
-    public static void Draw(Graphics graphics, RectangleF area, string text)
+    public static void Draw(Graphics graphics, RectangleF area, string text, bool fill = false)
     {
         if (string.IsNullOrWhiteSpace(text) || area.Width <= 0 || area.Height <= 0)
             return;
@@ -33,6 +33,11 @@ internal static class Code128
         var dots = Math.Max(2, (int)Math.Round(0.5f / dot));
         while (dots > 2 && dots * dot * total > area.Width)
             dots--;
+        if (fill)
+        {
+            while ((dots + 1) * dot * total <= area.Width * 0.98f)
+                dots++;
+        }
 
         var module = dots * dot;
         var width = module * total;

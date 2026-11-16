@@ -30,17 +30,25 @@ internal static class UpdateCheck
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             var tag = root.TryGetProperty("tag_name", out var tagValue) ? tagValue.GetString() : null;
-            if (!TryVersion(tag, out var remote))
+            if (!AppRelease.TryParse(tag, out var remote))
             {
                 if (manual)
                     Tell(owner, UiText.UpdateCheckFailed.TrimEnd());
                 return;
             }
 
-            if (remote <= AppRelease.Current)
+            var current = AppRelease.Current;
+            if (remote.Major == current.Major && remote.Minor == current.Minor && remote.Build == current.Build)
             {
                 if (manual)
-                    Tell(owner, UiText.UpToDate(AppRelease.Current));
+                    Tell(owner, UiText.UpToDate(current));
+                return;
+            }
+
+            if (remote <= current)
+            {
+                if (manual)
+                    Tell(owner, UiText.UpToDate(current));
                 return;
             }
 
@@ -94,20 +102,42 @@ internal static class UpdateCheck
 
     private static async Task DownloadAndReplace(Form owner, string download, Action replaceAndClose)
     {
-        owner.UseWaitCursor = true;
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            using var http = new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            };
             http.DefaultRequestHeaders.UserAgent.ParseAdd("CargoPlus");
-            var bytes = await http.GetByteArrayAsync(download);
             var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CargoPlus", "update");
             Directory.CreateDirectory(folder);
             var file = Path.Combine(folder, "CargoPlus.exe");
-            await File.WriteAllBytesAsync(file, bytes);
+            var part = file + ".part";
+            await DownloadToFileAsync(http, download, part, (done, total) =>
+            {
+                if (owner.IsDisposed)
+                    return;
+                var text = UiText.UpdateProgress((int)(done / 1048576), total is null ? 0 : (int)(total.Value / 1048576));
+                owner.BeginInvoke(() =>
+                {
+                    if (owner is MainForm form && !form.IsDisposed)
+                        form.ShowUpdateStatus(text);
+                });
+            });
+            File.Move(part, file, overwrite: true);
             var current = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(current))
                 throw new InvalidOperationException(UiText.UpdateMissingFile);
-            StartReplacer(file, current);
+            if (owner.IsDisposed)
+                return;
+            MessageBox.Show(owner, UiText.UpdateAskAdmin, UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (!StartReplacer(file, current))
+            {
+                if (!owner.IsDisposed)
+                    MessageBox.Show(owner, UiText.UpdateNeedAdmin, UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             replaceAndClose();
         }
         catch (Exception ex)
@@ -115,37 +145,111 @@ internal static class UpdateCheck
             if (!owner.IsDisposed)
                 MessageBox.Show(owner, UiText.UpdateFailed + ex.Message, UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
-        finally
-        {
-            if (!owner.IsDisposed)
-                owner.UseWaitCursor = false;
-        }
     }
 
-    private static void StartReplacer(string downloaded, string current)
+    private static async Task DownloadToFileAsync(HttpClient http, string url, string destination, Action<long, long?> progress)
     {
-        var script = Path.Combine(Path.GetTempPath(), "cargoplus-update.cmd");
-        var pid = Environment.ProcessId;
-        var text = $"""
-            @echo off
-            chcp 65001 >nul
-            :wait
-            tasklist /FI "PID eq {pid}" | find "{pid}" >nul
-            if not errorlevel 1 (
-              timeout /t 1 /nobreak >nul
-              goto wait
-            )
-            copy /y "{downloaded}" "{current}"
-            start "" "{current}"
-            del "%~f0"
-            """;
-        File.WriteAllText(script, text, new System.Text.UTF8Encoding(true));
-        Process.Start(new ProcessStartInfo
+        Exception? last = null;
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
-            FileName = script,
-            CreateNoWindow = true,
-            UseShellExecute = false,
-        });
+            try
+            {
+                using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+                using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancel.Token);
+                response.EnsureSuccessStatusCode();
+                var length = response.Content.Headers.ContentLength;
+                await using var input = await response.Content.ReadAsStreamAsync(cancel.Token);
+                await using var output = File.Create(destination);
+                var buffer = new byte[81920];
+                long done = 0;
+                while (true)
+                {
+                    using var slice = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);
+                    slice.CancelAfter(TimeSpan.FromSeconds(45));
+                    int read;
+                    try
+                    {
+                        read = await input.ReadAsync(buffer, slice.Token);
+                    }
+                    catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+                    {
+                        throw new TimeoutException(UiText.Timeout);
+                    }
+
+                    if (read == 0)
+                        break;
+                    await output.WriteAsync(buffer.AsMemory(0, read), cancel.Token);
+                    done += read;
+                    progress(done, length);
+                }
+
+                if (done < 1_000_000 || (length is > 0 && done != length.Value))
+                    throw new IOException(UiText.UpdateFailed.Trim());
+                return;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException)
+            {
+                last = ex;
+                try
+                {
+                    File.Delete(destination);
+                }
+                catch (IOException)
+                {
+                }
+
+                if (attempt < 3)
+                    await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
+            }
+        }
+
+        throw last ?? new IOException(UiText.UpdateFailed.Trim());
+    }
+
+    private static bool StartReplacer(string downloaded, string current)
+    {
+        var script = Path.Combine(Path.GetTempPath(), "cargoplus-update.ps1");
+        File.WriteAllText(script, """
+            param([int]$WaitPid, [string]$From, [string]$To)
+            $deadline = (Get-Date).AddMinutes(2)
+            while (Get-Process -Id $WaitPid -ErrorAction SilentlyContinue) {
+                if ((Get-Date) -gt $deadline) { break }
+                Start-Sleep -Milliseconds 300
+            }
+            Start-Sleep -Seconds 1
+            $ok = $false
+            for ($i = 0; $i -lt 20; $i++) {
+                try {
+                    Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
+                    $left = (Get-FileHash -LiteralPath $From -Algorithm SHA256).Hash
+                    $right = (Get-FileHash -LiteralPath $To -Algorithm SHA256).Hash
+                    if ($left -eq $right) { $ok = $true; break }
+                } catch { }
+                Start-Sleep -Seconds 1
+            }
+            if (-not $ok) {
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.MessageBox]::Show('Cargo Plus не смог заменить файл. Закройте программу и запустите CargoPlus-Setup.exe с рабочего стола.')
+            }
+            if (Test-Path -LiteralPath $To) { Start-Process -LiteralPath $To }
+            """, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        try
+        {
+            var args = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\" -WaitPid {Environment.ProcessId} -From \"{downloaded}\" -To \"{current}\"";
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = args,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+            });
+            return true;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
     }
 
     private static string? AssetUrl(JsonElement root)
@@ -161,18 +265,6 @@ internal static class UpdateCheck
         }
 
         return null;
-    }
-
-    private static bool TryVersion(string? tag, out Version version)
-    {
-        version = new Version(0, 0, 0);
-        if (string.IsNullOrWhiteSpace(tag))
-            return false;
-        var text = tag.Trim().TrimStart('v', 'V');
-        if (!Version.TryParse(text, out var parsed))
-            return false;
-        version = new Version(parsed.Major, parsed.Minor, Math.Max(parsed.Build, 0));
-        return true;
     }
 
     private static void Open(string? page)

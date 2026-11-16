@@ -42,6 +42,25 @@ internal static class BrandLogo
         }
     }
 
+    public static Bitmap ProgramMark()
+    {
+        try
+        {
+            var path = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                using var icon = Icon.ExtractAssociatedIcon(path);
+                if (icon is not null)
+                    return icon.ToBitmap();
+            }
+        }
+        catch (Exception)
+        {
+        }
+
+        return SystemIcons.Application.ToBitmap();
+    }
+
     public static void Delete(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -137,6 +156,7 @@ internal static class BrandLogo
         var previous = form.Icon;
         form.ShowIcon = true;
         form.Icon = next;
+        AppTray.Use(next);
         if (previous is not null && Owned.Remove(previous))
             previous.Dispose();
         Owned.Add(next);

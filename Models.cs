@@ -66,11 +66,21 @@ internal sealed class SessionInfo
     }
 }
 
+internal sealed record BagDrop(long Id, string KodId, string TrackCode);
+
+internal sealed class BagItem
+{
+    public int Line { get; init; }
+    public required string Name { get; init; }
+    public required string Qty { get; init; }
+    public required string Unit { get; init; }
+}
+
 internal sealed class BagRecord
 {
     public required long LocalId { get; init; }
     public required string SessionId { get; init; }
-    public required int KodId { get; init; }
+    public required string KodId { get; init; }
     public required uint Kod { get; init; }
     public required string Kilo { get; init; }
     public required string TeslimEden { get; init; }
@@ -85,6 +95,7 @@ internal sealed class BagRecord
     public string OperatorName { get; init; } = "";
     public required bool Synced { get; init; }
     public string? SyncError { get; init; }
+    public IReadOnlyList<BagItem> Items { get; set; } = [];
 }
 
 internal sealed class AppSettings
@@ -101,6 +112,7 @@ internal sealed class AppSettings
     public string Branch { get; set; } = "Kuran Hotel";
     public string Language { get; set; } = "tr";
     public string LogoPath { get; set; } = "";
+    public string PriemTable { get; set; } = "priem_ob";
     public string EnabledBolum { get; set; } = "1,2,3,4,6";
 
     public bool IsBolumEnabled(string code)
@@ -113,6 +125,15 @@ internal sealed class AppSettings
     public int BagStart { get; set; } = 200_000;
     public int BagEnd { get; set; } = 600_000;
     public int BagNext { get; set; } = 200_000;
+    public string StationLetter { get; set; } = "";
+    public bool StationLetterManual { get; set; }
+    public int NumbersAckEnd { get; set; } = -1;
+    public string PrintHide { get; set; } = "";
+    public string PrintSizes { get; set; } = "";
+    public string OperatorRights { get; set; } = "";
+    public float ReceiptScale { get; set; } = 1f;
+    public int TelemetryMinutes { get; set; } = 7;
+    public string TelemetryUrl { get; set; } = "http://104.247.162.163/api/telemetry.php";
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Host)
@@ -132,6 +153,8 @@ internal sealed record SyncState(
     int? LatencyMs,
     double? KiloBytesPerSecond,
     string? Error,
-    DateTime? LastOk);
+    DateTime? LastOk,
+    IReadOnlyList<uint>? MissingCodes = null,
+    string? RejectedBag = null);
 
 internal sealed record SchemaStatus(bool TableExisted, bool CreatedTable, bool AddedTrack, bool ClientTableExists);
