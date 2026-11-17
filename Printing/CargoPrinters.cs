@@ -97,21 +97,24 @@ internal static class CargoPrinters
         var words = PrintWords.From(settings);
         var bagNumber = bag.KodId;
         var code = bag.Kod.ToString(CultureInfo.InvariantCulture);
-        var phone = string.IsNullOrWhiteSpace(bag.StorePhone) ? session.StorePhone.Trim() : bag.StorePhone.Trim();
         var storeName = string.IsNullOrWhiteSpace(bag.StoreName) ? session.StoreName.Trim() : bag.StoreName.Trim();
         var company = (string.IsNullOrWhiteSpace(settings.Company) ? "BARAKA LOGISTIC" : settings.Company.Trim())
             .ToUpper(CultureInfo.GetCultureInfo("tr-TR"));
         if (company.EndsWith(" CARGO", StringComparison.Ordinal))
             company = company[..^6].TrimEnd();
-        const float sideGap = 1.2f;
-        const float sideWidth = 9f;
-        var sideTop = 2f;
-        var sideHeight = LabelHeightMm - 4f;
-        var left = LabelStripeMm + sideGap;
-        var right = LabelWidthMm - LabelStripeMm - sideGap - sideWidth;
-        var centerLeft = left + sideWidth + 1.6f;
-        var centerWidth = right - centerLeft - 1.6f;
-        var limit = LabelHeightMm - 2f;
+        const float edge = LabelStripeMm + 3.6f;
+        var contentLeft = edge;
+        var contentWidth = LabelWidthMm - edge * 2f;
+        var show = (string key) => PrintParts.Visible(settings, key);
+        float Part(string key, float size) => size * PrintParts.Scale(settings, key);
+        var footerParts = new List<string>();
+        if (show(PrintParts.LabelStore) && storeName.Length > 0)
+            footerParts.Add(storeName);
+        if (show(PrintParts.LabelDate))
+            footerParts.Add(bag.Tarih.ToString("dd.MM.yyyy"));
+        var footer = string.Join("   ", footerParts);
+        const float footerBand = 6.4f;
+        var limit = LabelHeightMm - 2f - (footer.Length > 0 ? footerBand + 0.8f : 0f);
         using var ink = new SolidBrush(Color.Black);
         using var paper = new SolidBrush(Color.White);
         using var center = new StringFormat
@@ -121,95 +124,102 @@ internal static class CargoPrinters
             Trimming = StringTrimming.EllipsisCharacter,
             FormatFlags = StringFormatFlags.NoWrap,
         };
-        using var verticalFormat = new StringFormat
-        {
-            Alignment = StringAlignment.Center,
-            LineAlignment = StringAlignment.Center,
-            Trimming = StringTrimming.EllipsisCharacter,
-        };
-        var show = (string key) => PrintParts.Visible(settings, key);
-        float Part(string key, float size) => size * PrintParts.Scale(settings, key);
-        var storeText = storeName.Length == 0 ? phone : phone.Length == 0 ? storeName : storeName + "\n" + phone;
-        if (show(PrintParts.LabelStore) && storeText.Length > 0)
-        {
-            var longest = storeText.Split('\n').MaxBy(line => line.Length) ?? storeText;
-            using var storeFont = FitLabel(graphics, longest, Part(PrintParts.LabelStore, 9f), sideHeight - 2f);
-            DrawVertical(graphics, new RectangleF(left, sideTop, sideWidth, sideHeight), storeText, storeFont, ink, verticalFormat);
-        }
-
-        var dateText = bag.Tarih.ToString("dd.MM.yyyy");
-        if (show(PrintParts.LabelDate))
-        {
-            using var dateFont = FitLabel(graphics, dateText, Part(PrintParts.LabelDate, 9f), sideHeight - 2f);
-            DrawVertical(graphics, new RectangleF(right, sideTop, sideWidth, sideHeight), dateText, dateFont, ink, verticalFormat);
-        }
 
         var y = 2f;
         if (show(PrintParts.LabelNumber))
         {
-            const float numberHeight = 14f;
-            using var numberFont = FitBox(graphics, bagNumber, Part(PrintParts.LabelNumber, 36f), centerWidth - 1f, numberHeight);
-            graphics.DrawString(bagNumber, numberFont, ink, new RectangleF(centerLeft, y, centerWidth, numberHeight), center);
-            y += numberHeight + 0.4f;
-        }
-
-        if (show(PrintParts.LabelBarcode))
-        {
-            var barcodeWidth = Math.Min(42f, centerWidth - 8f);
-            var barcodeLeft = centerLeft + (centerWidth - barcodeWidth) / 2f;
-            Code128.Draw(graphics, new RectangleF(barcodeLeft, y, barcodeWidth, 16f), bagNumber);
-            y += 17f;
+            const float numberHeight = 12f;
+            var numberBox = new RectangleF(contentLeft, y, contentWidth, numberHeight);
+            using var numberFont = FitBox(graphics, bagNumber, Part(PrintParts.LabelNumber, 33.2f), contentWidth - 1.2f, numberHeight);
+            graphics.DrawString(bagNumber, numberFont, ink, numberBox, center);
+            graphics.DrawString(bagNumber, numberFont, ink, new RectangleF(numberBox.X + 0.25f, numberBox.Y, numberBox.Width, numberBox.Height), center);
+            graphics.DrawString(bagNumber, numberFont, ink, new RectangleF(numberBox.X + 0.12f, numberBox.Y + 0.1f, numberBox.Width, numberBox.Height), center);
+            y += numberHeight + 0.3f;
         }
 
         var showPanel = show(PrintParts.LabelMark) || show(PrintParts.LabelFirm) || show(PrintParts.LabelKilo) || show(PrintParts.LabelCode);
-        if (!showPanel || y >= limit - 8f)
-            return;
-
-        var panelHeight = Math.Min(22f, limit - y - 1.2f);
-        var panel = new RectangleF(centerLeft, y + 0.8f, centerWidth, panelHeight);
-        graphics.FillRectangle(ink, panel);
-        var headHeight = Math.Min(7f, panel.Height * 0.42f);
-        var head = new RectangleF(panel.X + 1f, panel.Y + 1f, panel.Width - 2f, headHeight);
-        if (show(PrintParts.LabelMark))
+        const float baseBarcode = 12.5f;
+        const float barcodeGap = 0.9f;
+        var naturalPanel = showPanel ? Math.Min(36f, limit - y - (baseBarcode + barcodeGap) - 1.2f) : 0f;
+        var headGuess = Math.Min(5.2f, Math.Max(0f, naturalPanel) * 0.2f);
+        var boxGuess = Math.Max(0f, naturalPanel - headGuess - 3f);
+        var saved = boxGuess * 0.3f;
+        if (show(PrintParts.LabelBarcode))
         {
-            var markBox = new RectangleF(head.X, head.Y, 16f, head.Height);
-            using var markFont = FitLabel(graphics, words.BolumMark(bag.Bolum), Part(PrintParts.LabelMark, 22f), markBox.Width - 1f);
-            graphics.DrawString(words.BolumMark(bag.Bolum), markFont, paper, markBox, center);
-        }
-        if (show(PrintParts.LabelFirm))
-        {
-            var nameBox = new RectangleF(head.X + 16f, head.Y, head.Width - 16f, head.Height);
-            using var nameFont = FitLabel(graphics, company, Part(PrintParts.LabelFirm, 12f), nameBox.Width - 1f);
-            graphics.DrawString(company, nameFont, paper, nameBox, center);
+            var barcodeWidth = contentWidth - 2f;
+            var barcodeLeft = contentLeft + (contentWidth - barcodeWidth) / 2f;
+            var barcodeHeight = baseBarcode + (showPanel ? saved : 0f);
+            Code128.Draw(graphics, new RectangleF(barcodeLeft, y, barcodeWidth, barcodeHeight), bagNumber);
+            y += barcodeHeight + barcodeGap;
         }
 
-        var gap = 1f;
-        var boxTop = head.Bottom + gap;
-        var boxHeight = panel.Bottom - boxTop - gap;
-        var boxWidth = (panel.Width - gap * 3f) / 2f;
-        if (show(PrintParts.LabelKilo))
-            DrawValueBox(graphics, new RectangleF(panel.X + gap, boxTop, boxWidth, boxHeight), "KG", bag.Kilo, ink, paper, center, Part(PrintParts.LabelKilo, 24f));
-        if (show(PrintParts.LabelCode))
-            DrawValueBox(graphics, new RectangleF(panel.X + gap * 2f + boxWidth, boxTop, boxWidth, boxHeight), "KOD", code, ink, paper, center, Part(PrintParts.LabelCode, 34f));
+        if (showPanel && naturalPanel > 8f)
+        {
+            var panelHeight = naturalPanel - saved;
+            var panel = new RectangleF(contentLeft, y + 0.6f, contentWidth, panelHeight);
+            graphics.FillRectangle(ink, panel);
+            var headHeight = Math.Min(5.2f, panel.Height * 0.2f);
+            var head = new RectangleF(panel.X + 1f, panel.Y + 1f, panel.Width - 2f, headHeight);
+            if (show(PrintParts.LabelMark))
+            {
+                var markBox = new RectangleF(head.X, head.Y, 16f, head.Height);
+                using var markFont = FitLabel(graphics, words.BolumMark(bag.Bolum), Part(PrintParts.LabelMark, 22f), markBox.Width - 1f);
+                graphics.DrawString(words.BolumMark(bag.Bolum), markFont, paper, markBox, center);
+            }
+            if (show(PrintParts.LabelFirm))
+            {
+                var nameBox = new RectangleF(head.X + 16f, head.Y, head.Width - 16f, head.Height);
+                using var nameFont = FitLabel(graphics, company, Part(PrintParts.LabelFirm, 12f), nameBox.Width - 1f);
+                graphics.DrawString(company, nameFont, paper, nameBox, center);
+            }
+
+            var gap = 1f;
+            var boxTop = head.Bottom + gap;
+            var boxHeight = panel.Bottom - boxTop - gap;
+            var showKilo = show(PrintParts.LabelKilo);
+            var showCode = show(PrintParts.LabelCode);
+            var inner = panel.Width - gap * 3f;
+            var kiloWidth = showKilo && showCode ? inner * 0.36f : inner;
+            var codeWidth = showKilo && showCode ? inner - kiloWidth : inner;
+            if (showKilo)
+                DrawValueBox(graphics, new RectangleF(panel.X + gap, boxTop, kiloWidth, boxHeight), "KG", bag.Kilo, ink, paper, center, Part(PrintParts.LabelKilo, 28f));
+            if (showCode)
+            {
+                var codeMax = code.Length switch
+                {
+                    <= 4 => 56f,
+                    <= 6 => 48f,
+                    <= 8 => 40f,
+                    _ => 32f,
+                };
+                var codeLeft = panel.X + gap + (showKilo ? kiloWidth + gap : 0f);
+                DrawValueBox(graphics, new RectangleF(codeLeft, boxTop, codeWidth, boxHeight), "KOD", code, ink, paper, center, Part(PrintParts.LabelCode, codeMax), thick: true);
+            }
+
+            y = panel.Bottom + 0.8f;
+        }
+
+        if (footer.Length > 0)
+        {
+            using var footerFont = FitBox(graphics, footer, Part(PrintParts.LabelStore, 11f), contentWidth - 1f, footerBand - 0.4f, 6f);
+            graphics.DrawString(footer, footerFont, ink, new RectangleF(contentLeft, y, contentWidth, footerBand), center);
+        }
     }
 
-    private static void DrawVertical(Graphics graphics, RectangleF box, string text, Font font, Brush brush, StringFormat format)
-    {
-        var state = graphics.Save();
-        graphics.TranslateTransform(box.X + box.Width / 2f, box.Y + box.Height / 2f);
-        graphics.RotateTransform(90f);
-        graphics.DrawString(text, font, brush, new RectangleF(-box.Height / 2f, -box.Width / 2f, box.Height, box.Width), format);
-        graphics.Restore(state);
-    }
-
-    private static void DrawValueBox(Graphics graphics, RectangleF box, string caption, string value, Brush ink, Brush paper, StringFormat center, float maxPoint)
+    private static void DrawValueBox(Graphics graphics, RectangleF box, string caption, string value, Brush ink, Brush paper, StringFormat center, float maxPoint, bool thick = false)
     {
         graphics.FillRectangle(paper, box);
         using var captionFont = new Font("Arial", 6f, FontStyle.Bold, GraphicsUnit.Point);
-        var valueBox = new RectangleF(box.X + 0.3f, box.Y + 2.6f, box.Width - 0.6f, Math.Max(4f, box.Height - 2.9f));
-        using var valueFont = FitBox(graphics, value, maxPoint, valueBox.Width, valueBox.Height);
-        graphics.DrawString(caption, captionFont, ink, new RectangleF(box.X, box.Y + 0.1f, box.Width, 2.5f), center);
+        var valueBox = new RectangleF(box.X + 0.4f, box.Y + 2.2f, box.Width - 0.8f, Math.Max(4f, box.Height - 2.5f));
+        var fitWidth = thick ? valueBox.Width - 0.5f : valueBox.Width;
+        using var valueFont = FitBox(graphics, value, maxPoint, fitWidth, valueBox.Height);
+        graphics.DrawString(caption, captionFont, ink, new RectangleF(box.X, box.Y + 0.05f, box.Width, 2.15f), center);
         graphics.DrawString(value, valueFont, ink, valueBox, center);
+        if (thick)
+        {
+            graphics.DrawString(value, valueFont, ink, new RectangleF(valueBox.X + 0.32f, valueBox.Y, valueBox.Width, valueBox.Height), center);
+            graphics.DrawString(value, valueFont, ink, new RectangleF(valueBox.X + 0.16f, valueBox.Y + 0.12f, valueBox.Width, valueBox.Height), center);
+        }
     }
 
     private static void DrawReceipt(PrintPageEventArgs e, AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags, bool storeCopy)
@@ -414,9 +424,9 @@ internal static class CargoPrinters
     private static Font FitLabel(Graphics graphics, string text, float maxPoint, float width) =>
         FitBox(graphics, text, maxPoint, width, float.MaxValue);
 
-    private static Font FitBox(Graphics graphics, string text, float maxPoint, float width, float height)
+    private static Font FitBox(Graphics graphics, string text, float maxPoint, float width, float height, float minPoint = 8f)
     {
-        var min = Math.Min(8f, maxPoint);
+        var min = Math.Min(minPoint, maxPoint);
         for (var size = maxPoint; size >= min; size -= 0.5f)
         {
             var font = new Font("Arial", size, FontStyle.Bold, GraphicsUnit.Point);

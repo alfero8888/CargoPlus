@@ -260,7 +260,7 @@ internal static class UiText
     public static string PartLabelNumber => Tr ? "Çuval numarası" : "Номер мешка";
     public static string PartLabelDate => Tr ? "Tarih" : "Дата";
     public static string PartLabelBarcode => Tr ? "Barkod" : "Штрихкод";
-    public static string PartLabelStore => Tr ? "Mağaza ve telefon" : "Магазин и телефон";
+    public static string PartLabelStore => Tr ? "Mağaza" : "Магазин";
     public static string PartLabelMark => Tr ? "Bölüm harfi" : "Буква отдела";
     public static string PartLabelFirm => Tr ? "Firma adı" : "Название фирмы";
     public static string PartLabelKilo => Tr ? "Kilogram" : "Килограммы";
