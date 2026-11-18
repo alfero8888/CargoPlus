@@ -1,7 +1,7 @@
 #ifndef SourceExe
   #define SourceExe "CargoPlus.exe"
 #endif
-#define MyVersion "1.0.41"
+#define MyVersion "1.0.42"
 
 [Setup]
 AppId={{A7C3E1B4-9F2D-4C6A-8B15-6E4D2F0A91C3}
@@ -22,7 +22,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\brand\logo.ico
 UninstallDisplayIcon={app}\logo.ico
-VersionInfoVersion=1.0.41.0
+VersionInfoVersion=1.0.42.0
 VersionInfoCompany=Baraka Logistic Cargo
 VersionInfoProductName=Cargo Plus
 VersionInfoDescription=Cargo Plus setup

@@ -289,13 +289,8 @@ internal static partial class CargoRules
         return combined.Length <= 20 ? combined : combined[..20];
     }
 
-    public static string NumberPrefix(string? station, string? operatorName, string bolum)
-    {
-        var office = (station ?? "").Trim().ToUpperInvariant();
-        if (office.Length is < 1 or > 2)
-            office = FirstStationLetter(office);
-        return office + FirstStationLetter(operatorName) + BolumChoice.Letter(bolum);
-    }
+    public static string NumberPrefix(string? station, string? operatorName, string bolum) =>
+        FirstStationLetter(station) + FirstStationLetter(operatorName) + BolumChoice.Letter(bolum);
 
     public static string FirstStationLetter(string? branchName)
     {

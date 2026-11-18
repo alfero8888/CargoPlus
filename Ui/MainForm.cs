@@ -1831,6 +1831,7 @@ internal sealed class MainForm : FullScreenForm
     private void ApplyType()
     {
         var code = (_type.SelectedItem as BolumChoice)?.Code;
+        UpdateHeader();
         var show = CargoRules.NeedsContents(code);
         _contents.Visible = show;
         if (show && _contents.LineCount == 0)
@@ -1884,7 +1885,12 @@ internal sealed class MainForm : FullScreenForm
         _clock.Text = DateTime.Now.ToString("HH:mm:ss");
         var company = string.IsNullOrWhiteSpace(settings.Company) ? AppRelease.Product : settings.Company.Trim();
         Text = UiText.WindowTitle(settings.Company);
-        var next = settings.StationLetter.Trim().ToUpperInvariant();
+        var office = settings.StationLetter.Trim();
+        if (office.Length is < 1 or > 2)
+            office = settings.Branch;
+        var next = (_type.SelectedItem as BolumChoice) is { } choice
+            ? CargoRules.NumberPrefix(office, _user.Name, choice.Code)
+            : CargoRules.FirstStationLetter(office) + CargoRules.FirstStationLetter(_user.Name);
         _headerMeta.Text = UiText.Header(company, _user.Name, UiText.LevelTitle(_user.AccessLevel), next);
     }
 
