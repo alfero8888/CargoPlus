@@ -19,8 +19,6 @@ internal sealed class MainForm : FullScreenForm
     private readonly Label _clientName = new() { Text = "—", Font = Theme.Big, ForeColor = Theme.Ink, AutoEllipsis = true, Height = 40 };
     private readonly Label _clientPhone = new() { Text = "Телефон: —", Font = Theme.UiBold, ForeColor = Theme.Ink, AutoEllipsis = true, Height = 28 };
     private readonly Label _clientState = new() { Text = "Код ещё не проверен", Font = Theme.Ui, ForeColor = Theme.Muted, AutoEllipsis = true, Height = 24 };
-    private readonly Label _storeCount = new() { Font = Theme.Small, ForeColor = Theme.Muted, Height = 22, Text = "Название магазина: 0 из 50" };
-    private readonly Label _noteLabel;
     private readonly Label _headerMeta = new() { ForeColor = Color.White, Font = Theme.Small, AutoEllipsis = true };
     private readonly Label _clock = new() { ForeColor = Color.White, Font = Theme.UiBold, AutoSize = false, Width = 90, TextAlign = ContentAlignment.MiddleRight };
     private readonly Label _warn = new()
@@ -167,6 +165,10 @@ internal sealed class MainForm : FullScreenForm
         _sync = new SyncService(store, _remote);
         Text = UiText.WindowTitle(_store.GetSettings().Company);
         _code.MaxLength = 10;
+        _code.Font = Theme.Digits;
+        _storePhone.Font = Theme.Digits;
+        _insurance.Font = Theme.Digits;
+        _kilo.Font = Theme.Digits;
         _note.MaxLength = CargoRules.NoteMax;
         _insurance.MaxLength = 6;
         _storePhone.MaxLength = 24;
@@ -176,14 +178,6 @@ internal sealed class MainForm : FullScreenForm
         _storeName.MaxLength = CargoRules.StoreNameMax;
         _kilo.MaxLength = 11;
         _insurance.Enabled = false;
-        _noteLabel = new Label
-        {
-            Font = Theme.Small,
-            ForeColor = Theme.Muted,
-            TextAlign = ContentAlignment.BottomLeft,
-            AutoSize = false,
-        };
-        _bind.Add(() => _noteLabel.Text = UiText.Note);
         _type.IntegralHeight = false;
         AppLanguage.Use(_store.GetSettings());
 
@@ -308,59 +302,63 @@ internal sealed class MainForm : FullScreenForm
 
         var left = Theme.CardPanel();
         _right = Theme.CardPanel();
-        var find = Theme.Command(UiText.CheckCode, Theme.Accent, 200);
+        var find = Theme.Command(UiText.CheckCode, Theme.Accent, 160);
+        find.AutoSize = true;
+        find.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        find.Padding = new Padding(12, 0, 12, 0);
+        find.Margin = new Padding(8, 1, 0, 1);
+        find.Dock = DockStyle.None;
+        find.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
         _bind.Add(() => find.Text = UiText.CheckCode);
         find.Click += async (_, _) => await FindAsync();
+        var codeRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            Margin = new Padding(0),
+            Padding = new Padding(0),
+        };
+        codeRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        codeRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        codeRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        codeRow.Controls.Add(_code, 0, 0);
+        codeRow.Controls.Add(find, 1, 0);
 
         var leftGrid = FormGrid(1);
         AddRow(leftGrid, 34);
-        AddRow(leftGrid, 22);
-        AddRow(leftGrid, 40);
-        AddRow(leftGrid, 52);
+        AddRow(leftGrid, 46);
         AddRow(leftGrid, 40);
         AddRow(leftGrid, 28);
         AddRow(leftGrid, 26);
         Cell(leftGrid, Section(() => UiText.ClientSection), 0, 0);
-        Cell(leftGrid, Field(() => UiText.ClientCode), 0, 1);
-        Cell(leftGrid, _code, 0, 2);
-        Cell(leftGrid, find, 0, 3);
-        Cell(leftGrid, _clientName, 0, 4);
-        Cell(leftGrid, _clientPhone, 0, 5);
-        Cell(leftGrid, _clientState, 0, 6);
+        Cell(leftGrid, codeRow, 0, 1);
+        Cell(leftGrid, _clientName, 0, 2);
+        Cell(leftGrid, _clientPhone, 0, 3);
+        Cell(leftGrid, _clientState, 0, 4);
         left.Controls.Add(leftGrid);
 
-        var rightGrid = FormGrid(2);
-        AddRow(rightGrid, 34);
-        AddRow(rightGrid, 22);
-        AddRow(rightGrid, 40);
-        AddRow(rightGrid, 22);
-        AddRow(rightGrid, 40);
-        AddRow(rightGrid, 24);
-        AddRow(rightGrid, 22);
-        AddRow(rightGrid, 40);
-        Cell(rightGrid, Section(() => UiText.StoreSection), 0, 0, 2);
-        Cell(rightGrid, Field(() => UiText.StorePhone), 0, 1, 2);
-        Cell(rightGrid, _storePhone, 0, 2, 2);
-        Cell(rightGrid, Field(() => UiText.StoreName), 0, 3, 2);
-        Cell(rightGrid, _storeName, 0, 4, 2);
-        Cell(rightGrid, _storeCount, 0, 5, 2);
-        Cell(rightGrid, Field(() => UiText.Type), 0, 6);
-        Cell(rightGrid, Field(() => UiText.Insurance), 1, 6);
-        Cell(rightGrid, _type, 0, 7);
-        Cell(rightGrid, _insurance, 1, 7);
+        var rightGrid = FormGrid(3);
+        rightGrid.ColumnStyles.Clear();
+        rightGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+        rightGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        rightGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+        AddRow(rightGrid, 44);
+        AddRow(rightGrid, 44);
+        Cell(rightGrid, _storePhone, 0, 0, 3);
+        Cell(rightGrid, _storeName, 0, 1);
+        Cell(rightGrid, _type, 1, 1);
+        Cell(rightGrid, _insurance, 2, 1);
         rightGrid.Dock = DockStyle.Top;
-        rightGrid.Height = 250;
+        rightGrid.Height = 92;
         var tail = FormGrid(2);
-        AddRow(tail, 22);
-        AddRow(tail, 40);
-        AddRow(tail, 22);
-        AddRow(tail, 40);
-        Cell(tail, _noteLabel, 0, 0, 2);
-        Cell(tail, _note, 0, 1, 2);
-        Cell(tail, Field(() => UiText.Kilos), 0, 2, 2);
-        Cell(tail, _kilo, 0, 3, 2);
+        tail.ColumnStyles.Clear();
+        tail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        tail.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
+        AddRow(tail, 44);
+        Cell(tail, _note, 0, 0);
+        Cell(tail, _kilo, 1, 0);
         tail.Dock = DockStyle.Top;
-        tail.Height = 130;
+        tail.Height = 48;
         var intakeStack = new Panel { BackColor = Color.White };
         intakeStack.Controls.Add(tail);
         intakeStack.Controls.Add(_contents);
@@ -375,9 +373,13 @@ internal sealed class MainForm : FullScreenForm
         void LayoutIntake()
         {
             var width = Math.Max(240, intakeScroll.ClientSize.Width);
-            var height = rightGrid.Height + (_contents.Visible ? _contents.Height : 0) + tail.Height + 12;
+            var height = rightGrid.Height + (_contents.Visible ? _contents.Height : 0) + tail.Height;
+            var scrolled = intakeScroll.AutoScrollPosition;
+            intakeStack.SuspendLayout();
             intakeStack.SetBounds(0, 0, width, height);
+            intakeStack.ResumeLayout(true);
             intakeScroll.AutoScrollMinSize = new Size(0, height);
+            intakeScroll.AutoScrollPosition = new Point(-scrolled.X, -scrolled.Y);
         }
         _contents.LeaveToKilos += () =>
         {
@@ -392,13 +394,13 @@ internal sealed class MainForm : FullScreenForm
         _entry = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 440,
+            Height = 320,
             ColumnCount = 2,
             Padding = new Padding(12, 8, 12, 0),
             BackColor = Theme.Bg,
         };
-        _entry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
-        _entry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
+        _entry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+        _entry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
         _entry.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         left.Margin = new Padding(0, 0, 8, 8);
         _right.Margin = new Padding(8, 0, 0, 8);
@@ -465,6 +467,14 @@ internal sealed class MainForm : FullScreenForm
         _work.Controls.Add(gridWrap);
         _work.Controls.Add(_entry);
         _work.Controls.Add(footer);
+        FieldTip.Bind(_code, () => UiText.TipClientCode);
+        FieldTip.Bind(find, () => UiText.TipCheckCode);
+        FieldTip.Bind(_storePhone, () => UiText.TipStorePhone);
+        FieldTip.Bind(_storeName, () => UiText.TipStoreName);
+        FieldTip.Bind(_type, () => UiText.TipType);
+        FieldTip.Bind(_insurance, () => UiText.InsuranceNumber);
+        FieldTip.Bind(_note, () => UiText.TipNote);
+        FieldTip.Bind(_kilo, () => UiText.TipKilos);
 
         _home = BuildHome();
         _browse = BuildBrowse();
@@ -544,12 +554,20 @@ internal sealed class MainForm : FullScreenForm
         SetHeader("mal", UiText.MalColumn);
         SetHeader("iqty", AppLanguage.Turkish ? "Miktar" : "Кол-во");
         SetHeader("iunit", AppLanguage.Turkish ? "Birim" : "Ед.");
+        SetHeader("ifatura", UiText.InvoiceNoLabel);
+        SetHeader("idate", UiText.InvoiceDateLabel);
         SetHeader("office", UiText.OfficeColumn);
         SetHeader("operator", UiText.OperatorColumn);
         SetHeader("insurance", UiText.ColInsurance);
         SetHeader("store", UiText.ColStore);
         SetHeader("time", UiText.ColTime);
         SetHeader("sync", UiText.ColServer);
+        _code.PlaceholderText = UiText.ClientCode;
+        _storePhone.PlaceholderText = UiText.StorePhone;
+        _storeName.PlaceholderText = UiText.StoreName;
+        _insurance.PlaceholderText = UiText.Insurance;
+        _note.PlaceholderText = UiText.Note;
+        _kilo.PlaceholderText = UiText.Kilos;
         if (_grid.Columns["drop"] is DataGridViewButtonColumn)
         {
             foreach (DataGridViewRow row in _grid.Rows)
@@ -558,18 +576,20 @@ internal sealed class MainForm : FullScreenForm
                 {
                     row.Cells["type"].Value = BolumChoice.TitleOf(bag.Bolum);
                     row.Cells["drop"].Value = UiText.Delete;
+                    row.Cells["drop"].ToolTipText = UiText.DeleteBagTip;
                     row.Cells["edit"].Value = CargoRules.NeedsContents(bag.Bolum) ? "+" : "";
+                    row.Cells["edit"].ToolTipText = CargoRules.NeedsContents(bag.Bolum) ? UiText.AddGoodsTip : "";
                 }
                 else if (row.Tag is ItemSlot)
                 {
                     row.Cells["drop"].Value = "×";
+                    row.Cells["drop"].ToolTipText = UiText.RemoveLineTip;
                     row.Cells["iunit"].Value = UiText.UnitLabel(UnitCodeFromLabel(row.Cells["iunit"].Value?.ToString()));
                 }
             }
         }
 
         UpdateCount();
-        UpdateStoreCount();
         UpdateHeader();
         RefreshHomeReport();
         RefreshSyncColumn();
@@ -603,6 +623,8 @@ internal sealed class MainForm : FullScreenForm
         AddColumn("mal", UiText.MalColumn, 160);
         AddColumn("iqty", "Miktar", 70);
         AddColumn("iunit", "Birim", 80);
+        AddColumn("ifatura", UiText.InvoiceNoLabel, 120);
+        AddColumn("idate", UiText.InvoiceDateLabel, 110);
         AddColumn("office", "Отделение", 110);
         AddColumn("operator", "Принял", 110);
         AddColumn("insurance", "Страховка", 80);
@@ -637,14 +659,14 @@ internal sealed class MainForm : FullScreenForm
             },
         });
         foreach (DataGridViewColumn column in _grid.Columns)
-            column.ReadOnly = column.Name is not ("pick" or "drop" or "edit" or "mal" or "iqty" or "iunit");
+            column.ReadOnly = column.Name is not ("pick" or "drop" or "edit" or "mal" or "iqty" or "iunit" or "ifatura" or "idate");
         _grid.CellBeginEdit += (_, e) =>
         {
             if (e.RowIndex < 0)
                 return;
             var column = _grid.Columns[e.ColumnIndex].Name;
             var tag = _grid.Rows[e.RowIndex].Tag;
-            var itemEdit = tag is ItemSlot && column is "mal" or "iqty" or "iunit";
+            var itemEdit = tag is ItemSlot && column is "mal" or "iqty" or "iunit" or "ifatura" or "idate";
             var pick = tag is BagRecord && column == "pick";
             if (!itemEdit && !pick)
                 e.Cancel = true;
@@ -809,12 +831,7 @@ internal sealed class MainForm : FullScreenForm
             e.SuppressKeyPress = true;
             AcceptBag();
         };
-        _storePhone.TextChanged += (_, _) =>
-        {
-            UpdateStoreCount();
-            GateFields();
-        };
-        _storeName.TextChanged += (_, _) => UpdateStoreCount();
+        _storePhone.TextChanged += (_, _) => GateFields();
         _type.SelectedIndexChanged += (_, _) => ApplyType();
         _type.SelectionChangeCommitted += (_, _) =>
         {
@@ -1042,7 +1059,15 @@ internal sealed class MainForm : FullScreenForm
         try
         {
             var result = _store.AddBag(_session, _user, _client, _storePhone.Text, _storeName.Text, teslim, bolum!, sigorta, not1, kilo, items);
-            result.Bag.Items = items.Select(item => new BagItem { Line = item.Line, Name = item.Name, Qty = item.Qty, Unit = item.Unit }).ToList();
+            result.Bag.Items = items.Select(item => new BagItem
+            {
+                Line = item.Line,
+                Name = item.Name,
+                Qty = item.Qty,
+                Unit = item.Unit,
+                InvoiceNo = item.InvoiceNo,
+                InvoiceDate = item.InvoiceDate,
+            }).ToList();
             _contents.SetNames(_store.RecentItemNames());
             _session = result.Session;
             AddRow(result.Bag);
@@ -1105,7 +1130,7 @@ internal sealed class MainForm : FullScreenForm
 
         if (IsDisposed || _kilo.IsDisposed)
             return;
-        _kilo.BackColor = SystemColors.Window;
+        _kilo.BackColor = _kilo.Focused ? FocusMark.Paper : SystemColors.Window;
     }
 
     private void ReleaseClient()
@@ -1524,6 +1549,8 @@ internal sealed class MainForm : FullScreenForm
             CargoRules.ContentsBrief(bag.Items),
             "",
             "",
+            "",
+            "",
             bag.Office,
             bag.OperatorName,
             bag.Sigorta.ToString(CultureInfo.InvariantCulture),
@@ -1534,7 +1561,9 @@ internal sealed class MainForm : FullScreenForm
         row.Tag = bag;
         row.Cells["mal"].ToolTipText = CargoRules.ContentsText(bag.Items);
         row.Cells["edit"].Value = CargoRules.NeedsContents(bag.Bolum) ? "+" : "";
+        row.Cells["edit"].ToolTipText = CargoRules.NeedsContents(bag.Bolum) ? UiText.AddGoodsTip : "";
         row.Cells["drop"].Value = UiText.Delete;
+        row.Cells["drop"].ToolTipText = UiText.DeleteBagTip;
         foreach (var item in bag.Items)
             InsertItemRow(bag, item);
         if (_pickAll.Checked)
@@ -1569,6 +1598,8 @@ internal sealed class MainForm : FullScreenForm
             tr ? "Ürün" : "Товар",
             tr ? "Miktar" : "Количество",
             tr ? "Birim" : "Единица",
+            UiText.InvoiceNoLabel,
+            UiText.InvoiceDateLabel,
             UiText.ColTrack,
             UiText.ColTime,
             UiText.ColType,
@@ -1589,6 +1620,10 @@ internal sealed class MainForm : FullScreenForm
             return "kg";
         if (value.Contains("lit") || value.Contains("литр") || value is "l" or "lt")
             return "litre";
+        if (value is "mt" or "m" or "metre" or "meter" || value.Contains("метр"))
+            return "mt";
+        if (value.Contains("cift") || value.Contains("çift") || value.Contains("çft") || value.Contains("cft") || value.Contains("пар"))
+            return "cift";
         return "adet";
     }
 
@@ -1618,11 +1653,14 @@ internal sealed class MainForm : FullScreenForm
             item?.Name ?? "",
             item?.Qty ?? "",
             item is null ? UiText.UnitAdet : UiText.UnitLabel(item.Unit),
+            item?.InvoiceNo ?? "",
+            item is null ? "" : CargoRules.InvoiceDateText(item.InvoiceDate),
             "", "", "", "", "", "");
         var row = _grid.Rows[at];
         row.Tag = new ItemSlot(bag);
         row.Cells["edit"].Value = "";
         row.Cells["drop"].Value = "×";
+        row.Cells["drop"].ToolTipText = UiText.RemoveLineTip;
         row.ReadOnly = false;
     }
 
@@ -1675,14 +1713,26 @@ internal sealed class MainForm : FullScreenForm
                 return;
             }
 
+            var invoiceText = row.Cells["ifatura"].Value?.ToString() ?? "";
+            var dateText = row.Cells["idate"].Value?.ToString() ?? "";
+            if (!CargoRules.TryInvoice(invoiceText, dateText, out var invoiceNo, out var invoiceDate, out var invoiceError))
+            {
+                SetStatus(invoiceError, Theme.Danger);
+                return;
+            }
+
             items.Add(new BagItem
             {
                 Line = line,
                 Name = name,
                 Qty = qty,
                 Unit = UnitCodeFromLabel(row.Cells["iunit"].Value?.ToString()),
+                InvoiceNo = invoiceNo,
+                InvoiceDate = invoiceDate,
             });
             row.Cells["iqty"].Value = qty;
+            row.Cells["ifatura"].Value = invoiceNo;
+            row.Cells["idate"].Value = CargoRules.InvoiceDateText(invoiceDate);
             line++;
         }
 
@@ -1772,17 +1822,10 @@ internal sealed class MainForm : FullScreenForm
 
     private void UpdateCount() => _count.Text = UiText.Bags(_grid.Rows.Cast<DataGridViewRow>().Count(row => row.Tag is BagRecord));
 
-    private void UpdateStoreCount()
-    {
-        var length = _storeName.Text.Trim().Length;
-        _storeCount.Text = UiText.StoreLine(length);
-        _storeCount.ForeColor = length > CargoRules.StoreNameMax ? Theme.Danger : Theme.Muted;
-    }
-
     private void FitEntry()
     {
         var room = Math.Max(360, Height - 240);
-        _entry.Height = Math.Min(440, (int)(room * 0.5));
+        _entry.Height = Math.Clamp((int)(room * 0.42), 300, 380);
     }
 
     private void ApplyType()

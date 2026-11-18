@@ -74,6 +74,8 @@ internal sealed class BagItem
     public required string Name { get; init; }
     public required string Qty { get; init; }
     public required string Unit { get; init; }
+    public string InvoiceNo { get; init; } = "";
+    public string InvoiceDate { get; init; } = "";
 }
 
 internal sealed class BagRecord

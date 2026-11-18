@@ -478,21 +478,45 @@ internal static class UiText
     public static string ItemNameLong => Tr ? "Ürün adı en fazla 120 karakter." : "Название товара — не больше 120 символов.";
     public static string ItemLinesMax => Tr ? "Bir çuvalda en fazla 50 satır." : "В мешке не больше 50 строк.";
     public static string ItemQtyBad => Tr ? "Miktar 0'dan büyük olmalı. Örnek: 12.5" : "Количество должно быть больше 0. Пример: 12.5";
+    public static string InvoiceNoLabel => Tr ? "Fatura no" : "Номер фактуры";
+    public static string InvoiceDateFull => Tr ? "Fatura kesim tarihi" : "Дата выписки фактуры";
+    public static string AddGoodsTip => Tr ? "Mal satırı ekle" : "Добавить товар";
+    public static string TipClientCode => Tr ? "Müşteri kodu. Yazıp Enter'a basın." : "Код клиента. Напишите код и нажмите Enter.";
+    public static string TipCheckCode => Tr ? "Kodu kontrol eder. Çoğu zaman Enter yeter." : "Проверить код. Обычно достаточно Enter.";
+    public static string TipStorePhone => Tr ? "Mağazanın telefonu." : "Телефон магазина.";
+    public static string TipStoreName => Tr ? "Mağazanın adı." : "Название магазина.";
+    public static string TipType => Tr ? "Gönderinin türü." : "Тип отправки.";
+    public static string TipNote => Tr ? "Çuvala not." : "Заметка к мешку.";
+    public static string TipKilos => Tr ? "Ağırlık, kilogram." : "Вес в килограммах.";
+    public static string TipInvoice => Tr ? "Fatura numarası." : "Номер фактуры.";
+    public static string TipGoodsName => Tr ? "Malın adı." : "Название товара.";
+    public static string TipQty => Tr ? "Malın miktarı." : "Сколько товара.";
+    public static string TipUnit => Tr ? "Ölçü birimi." : "Единица измерения.";
+    public static string RemoveLineTip => Tr ? "Satırı sil" : "Удалить строку";
+    public static string DeleteBagTip => Tr ? "Çuvalı sil" : "Удалить мешок";
+    public static string GoodsName => Tr ? "Ürün adı" : "Название товара";
+    public static string GoodsQty => Tr ? "Miktar" : "Сколько";
+    public static string GoodsUnit => Tr ? "Birim" : "Единица";
+    public static string InvoiceDateLabel => Tr ? "Fatura tarihi" : "Дата фактуры";
+    public static string InvoiceNoLong => Tr ? "Fatura numarası en fazla 40 karakter." : "Номер фактуры — не больше 40 символов.";
+    public static string InvoiceDateBad => Tr ? "Fatura tarihini gün.ay.yıl yazın. Örnek: 18.11.2026" : "Дату фактуры пишите день.месяц.год. Пример: 18.11.2026";
+    public static string InvoiceColumnsMissing => Tr
+        ? "Sunucudaki mal tablosunda fatura sütunları yok. invoice_no ve invoice_date eklenmeli."
+        : "В таблице товаров на сервере нет колонок фактуры. Нужны invoice_no и invoice_date.";
     public static string UnitAdet => Tr ? "Adet" : "Штук";
     public static string UnitKg => "Kg";
     public static string UnitLitre => Tr ? "Litre" : "Литр";
+    public static string UnitMetre => "MT";
+    public static string UnitPair => "ÇFT";
     public static string UnitLabel(string unit) => ItemUnitCode(unit) switch
     {
         "kg" => "kg",
         "litre" => Tr ? "litre" : "литр",
+        "mt" => "MT",
+        "cift" => "ÇFT",
         _ => Tr ? "adet" : "шт",
     };
-    private static string ItemUnitCode(string unit) => unit.Trim().ToLowerInvariant() switch
-    {
-        "kg" => "kg",
-        "litre" or "lt" or "l" => "litre",
-        _ => "adet",
-    };
+    private static string ItemUnitCode(string unit) => CargoRules.ItemUnit(unit);
     public static string ItemsTableMissing => "Sunucuda bag_items tablosu yok";
     public static string MalColumn => "Mal";
     public static string ExportContents => Tr ? "Mal listesini kaydet" : "Сохранить состав";

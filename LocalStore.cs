@@ -146,11 +146,16 @@ internal sealed class LocalStore
                         name TEXT NOT NULL,
                         qty TEXT NOT NULL,
                         unit TEXT NOT NULL,
+                        invoice_no TEXT NOT NULL DEFAULT '',
+                        invoice_date TEXT NOT NULL DEFAULT '',
                         synced INTEGER NOT NULL DEFAULT 0
                     );
                     """;
                 items.ExecuteNonQuery();
             }
+
+            AddColumn(connection, "bag_items", "invoice_no", "TEXT NOT NULL DEFAULT ''");
+            AddColumn(connection, "bag_items", "invoice_date", "TEXT NOT NULL DEFAULT ''");
 
             using (var counters = connection.CreateCommand())
             {
@@ -807,7 +812,7 @@ internal sealed class LocalStore
             using var connection = Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT b.kodid, i.line, i.name, i.qty, i.unit, b.track_code, b.tarih, b.bolum
+                SELECT b.kodid, i.line, i.name, i.qty, i.unit, i.invoice_no, i.invoice_date, b.track_code, b.tarih, b.bolum
                 FROM bag_items i
                 JOIN bags b ON b.id = i.bag_id
                 ORDER BY b.tarih, b.kodid, i.line
@@ -824,8 +829,10 @@ internal sealed class LocalStore
                     reader.GetString(3),
                     reader.GetString(4),
                     reader.GetString(5),
-                    reader.GetString(6),
+                    CargoRules.InvoiceDateText(reader.GetString(6)),
                     reader.GetString(7),
+                    reader.GetString(8),
+                    reader.GetString(9),
                 ]);
             }
 
@@ -894,8 +901,8 @@ internal sealed class LocalStore
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                INSERT INTO bag_items (bag_id, kodid, line, name, qty, unit, synced)
-                VALUES ($bag, $kodid, $line, $name, $qty, $unit, 0)
+                INSERT INTO bag_items (bag_id, kodid, line, name, qty, unit, invoice_no, invoice_date, synced)
+                VALUES ($bag, $kodid, $line, $name, $qty, $unit, $invoice, $idate, 0)
                 """;
             command.Parameters.AddWithValue("$bag", bagId);
             command.Parameters.AddWithValue("$kodid", kodId);
@@ -903,6 +910,8 @@ internal sealed class LocalStore
             command.Parameters.AddWithValue("$name", item.Name.Trim());
             command.Parameters.AddWithValue("$qty", item.Qty);
             command.Parameters.AddWithValue("$unit", CargoRules.ItemUnit(item.Unit));
+            command.Parameters.AddWithValue("$invoice", item.InvoiceNo);
+            command.Parameters.AddWithValue("$idate", item.InvoiceDate);
             command.ExecuteNonQuery();
             line++;
         }
@@ -912,7 +921,7 @@ internal sealed class LocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT line, name, qty, unit FROM bag_items WHERE bag_id = $id ORDER BY line";
+        command.CommandText = "SELECT line, name, qty, unit, invoice_no, invoice_date FROM bag_items WHERE bag_id = $id ORDER BY line";
         command.Parameters.AddWithValue("$id", bagId);
         using var reader = command.ExecuteReader();
         var list = new List<BagItem>();
@@ -924,6 +933,8 @@ internal sealed class LocalStore
                 Name = reader.GetString(1),
                 Qty = reader.GetString(2),
                 Unit = reader.GetString(3),
+                InvoiceNo = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                InvoiceDate = reader.IsDBNull(5) ? "" : reader.GetString(5),
             });
         }
 

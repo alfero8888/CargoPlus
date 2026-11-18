@@ -90,10 +90,10 @@ internal sealed class RemoteDb
 
             await transaction.CommitAsync(cancellationToken);
         }
-        catch (Exception ex) when (IsMissingItemsTable(ex))
+        catch (Exception ex) when (ItemsSchemaMessage(ex) is string message)
         {
             await transaction.RollbackAsync(cancellationToken);
-            throw new InvalidOperationException(UiText.ItemsTableMissing);
+            throw new InvalidOperationException(message);
         }
     }
 
@@ -153,10 +153,10 @@ internal sealed class RemoteDb
             await transaction.CommitAsync(cancellationToken);
             _schemaKey = Key(settings);
         }
-        catch (Exception ex) when (IsMissingItemsTable(ex))
+        catch (Exception ex) when (ItemsSchemaMessage(ex) is string message)
         {
             await transaction.RollbackAsync(cancellationToken);
-            throw new InvalidOperationException(UiText.ItemsTableMissing);
+            throw new InvalidOperationException(message);
         }
     }
 
@@ -170,10 +170,10 @@ internal sealed class RemoteDb
             await WriteItemsAsync(connection, transaction, bag, items, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
-        catch (Exception ex) when (IsMissingItemsTable(ex))
+        catch (Exception ex) when (ItemsSchemaMessage(ex) is string message)
         {
             await transaction.RollbackAsync(cancellationToken);
-            throw new InvalidOperationException(UiText.ItemsTableMissing);
+            throw new InvalidOperationException(message);
         }
     }
 
@@ -193,20 +193,40 @@ internal sealed class RemoteDb
             await using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
-                INSERT INTO bag_items (kodid, line, name, qty, unit, track_code, created_at, created_by)
-                VALUES (@kodid, @line, @name, @qty, @unit, @track, @created, @by)
+                INSERT INTO bag_items (kodid, line, name, qty, unit, invoice_no, invoice_date, track_code, created_at, created_by)
+                VALUES (@kodid, @line, @name, @qty, @unit, @invoice, @idate, @track, @created, @by)
                 """;
             insert.Parameters.Add("@kodid", MySqlDbType.VarChar, 12).Value = bag.KodId;
             insert.Parameters.Add("@line", MySqlDbType.Int16).Value = line;
             insert.Parameters.Add("@name", MySqlDbType.VarChar, 120).Value = item.Name;
             insert.Parameters.Add("@qty", MySqlDbType.Decimal).Value = decimal.Parse(item.Qty, CultureInfo.InvariantCulture);
             insert.Parameters.Add("@unit", MySqlDbType.VarChar, 10).Value = CargoRules.ItemUnit(item.Unit);
+            insert.Parameters.Add("@invoice", MySqlDbType.VarChar, 40).Value = item.InvoiceNo.Length == 0 ? DBNull.Value : item.InvoiceNo;
+            insert.Parameters.Add("@idate", MySqlDbType.Date).Value = item.InvoiceDate.Length == 0
+                ? DBNull.Value
+                : DateTime.ParseExact(item.InvoiceDate, "yyyy-MM-dd", CultureInfo.InvariantCulture);
             insert.Parameters.Add("@track", MySqlDbType.VarChar, 20).Value = bag.TrackCode;
             insert.Parameters.Add("@created", MySqlDbType.DateTime).Value = DateTime.SpecifyKind(bag.Tarih, DateTimeKind.Unspecified);
             insert.Parameters.Add("@by", MySqlDbType.VarChar, 50).Value = Clip(bag.OperatorName, 50);
             await insert.ExecuteNonQueryAsync(cancellationToken);
             line++;
         }
+    }
+
+    private static string? ItemsSchemaMessage(Exception exception)
+    {
+        if (IsMissingItemsTable(exception))
+            return UiText.ItemsTableMissing;
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is MySqlException mysql
+                && mysql.ErrorCode == MySqlErrorCode.BadFieldError
+                && (mysql.Message.Contains("invoice_no", StringComparison.OrdinalIgnoreCase)
+                    || mysql.Message.Contains("invoice_date", StringComparison.OrdinalIgnoreCase)))
+                return UiText.InvoiceColumnsMissing;
+        }
+
+        return null;
     }
 
     public static bool IsMissingItemsTable(Exception exception)

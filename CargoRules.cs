@@ -384,6 +384,7 @@ internal static partial class CargoRules
     }
 
     public const int ItemNameMax = 120;
+    public const int InvoiceNoMax = 40;
     public const int ItemLineMax = 50;
 
     public static bool NeedsContents(string? bolum) => bolum is "2" or "6";
@@ -392,6 +393,8 @@ internal static partial class CargoRules
     {
         "kg" => "kg",
         "litre" or "lt" or "l" => "litre",
+        "mt" or "m" or "metre" or "meter" or "метр" => "mt",
+        "cift" or "çift" or "cft" or "çft" or "pair" or "пара" => "cift",
         _ => "adet",
     };
 
@@ -412,6 +415,44 @@ internal static partial class CargoRules
         qty = value.ToString("0.###", CultureInfo.InvariantCulture);
         error = "";
         return true;
+    }
+
+    public static bool TryInvoice(string number, string date, out string invoiceNo, out string invoiceDate, out string error)
+    {
+        invoiceNo = Compact(number);
+        invoiceDate = "";
+        if (invoiceNo.Length > InvoiceNoMax)
+        {
+            error = UiText.InvoiceNoLong;
+            return false;
+        }
+
+        var text = date.Trim();
+        if (text.Length == 0)
+        {
+            error = "";
+            return true;
+        }
+
+        string[] formats = ["dd.MM.yyyy", "d.M.yyyy", "dd.MM.yy", "yyyy-MM-dd"];
+        if (!DateTime.TryParseExact(text, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var day))
+        {
+            error = UiText.InvoiceDateBad;
+            return false;
+        }
+
+        invoiceDate = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        error = "";
+        return true;
+    }
+
+    public static string InvoiceDateText(string stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored))
+            return "";
+        return DateTime.TryParseExact(stored.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
+            ? day.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture)
+            : stored.Trim();
     }
 
     public static string ContentsText(IReadOnlyList<BagItem> items) =>

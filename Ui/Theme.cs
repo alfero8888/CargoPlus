@@ -44,6 +44,7 @@ internal static class Theme
     public static readonly Font UiBold = new("Segoe UI", 11f, FontStyle.Bold);
     public static readonly Font Small = new("Segoe UI", 9.5f);
     public static readonly Font Input = new("Segoe UI", 16f);
+    public static readonly Font Digits = new("Segoe UI", 16f, FontStyle.Bold);
     public static readonly Font Title = new("Segoe UI", 18f, FontStyle.Bold);
     public static readonly Font Big = new("Segoe UI", 22f, FontStyle.Bold);
 
@@ -76,7 +77,7 @@ internal static class Theme
 
     public static TextBox Box()
     {
-        return new TextBox
+        return new MarkedTextBox
         {
             BorderStyle = BorderStyle.FixedSingle,
             Font = Input,
