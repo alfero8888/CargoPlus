@@ -1064,7 +1064,7 @@ internal sealed class LocalStore
             var written = (settings.StationLetter ?? "").Trim().ToUpperInvariant();
             if (written.Length is 1 or 2)
                 station = written;
-            var kodId = TakeLetterNumber(connection, transaction, station, bolum);
+            var kodId = TakeLetterNumber(connection, transaction, station, user.Name, bolum);
             var tarih = DateTime.Now;
             var tarihText = tarih.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
             var track = session?.TrackCode;
@@ -1348,16 +1348,16 @@ internal sealed class LocalStore
         return settings;
     }
 
-    public void AlignCounters(AppSettings settings, Func<string, string, string?>? serverLatest)
+    public void AlignCounters(AppSettings settings, string operatorName, Func<string, string, string?>? serverLatest)
     {
         lock (_gate)
         {
             using var connection = Open();
-            AlignUnlocked(connection, settings, serverLatest);
+            AlignUnlocked(connection, settings, serverLatest, operatorName);
         }
     }
 
-    private static void AlignUnlocked(SqliteConnection connection, AppSettings settings, Func<string, string, string?>? serverLatest)
+    private static void AlignUnlocked(SqliteConnection connection, AppSettings settings, Func<string, string, string?>? serverLatest, string operatorName = "")
     {
         var letter = (settings.StationLetter ?? "").Trim().ToUpperInvariant();
         if (letter.Length is < 1 or > 2)
@@ -1367,7 +1367,7 @@ internal sealed class LocalStore
         {
             foreach (var choice in BolumChoice.All)
             {
-                var prefix = letter + BolumChoice.Letter(choice.Code);
+                var prefix = CargoRules.NumberPrefix(letter, operatorName, choice.Code);
                 var best = Best(ReadOne(connection, transaction, prefix), FromBags(connection, transaction, prefix), FromFile(prefix));
                 if (serverLatest is not null)
                 {
@@ -1391,9 +1391,9 @@ internal sealed class LocalStore
         }
     }
 
-    private static string TakeLetterNumber(SqliteConnection connection, SqliteTransaction transaction, string station, string bolum)
+    private static string TakeLetterNumber(SqliteConnection connection, SqliteTransaction transaction, string station, string operatorName, string bolum)
     {
-        var prefix = station.Trim().ToUpperInvariant() + BolumChoice.Letter(bolum);
+        var prefix = CargoRules.NumberPrefix(station, operatorName, bolum);
         var current = ReadOne(connection, transaction, prefix);
         if (current.Next < 1)
             current = current with { Next = 1 };

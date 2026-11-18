@@ -162,7 +162,7 @@ internal sealed class MainForm : FullScreenForm
     {
         _store = store;
         _user = user;
-        _sync = new SyncService(store, _remote);
+        _sync = new SyncService(store, _remote) { OperatorName = user.Name };
         Text = UiText.WindowTitle(_store.GetSettings().Company);
         _code.MaxLength = 10;
         _code.Font = Theme.Digits;

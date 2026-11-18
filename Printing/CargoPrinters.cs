@@ -669,9 +669,9 @@ internal static class CargoPrinters
             StorePhone = "05520009009",
             StoreName = "Test Market",
             OperatorName = "Operator",
-            TrackCode = station + "A11CND7CK",
+            TrackCode = station + "OA11CND7CK",
         };
-        return (session, SampleBag(session, station + "A11", "12.5", "0"), SampleBag(session, station + "A12", "8.0", "not"));
+        return (session, SampleBag(session, station + "OA11", "12.5", "0"), SampleBag(session, station + "OA12", "8.0", "not"));
     }
 
     private static BagRecord SampleBag(SessionInfo session, string kodId, string kilo, string note) => new()

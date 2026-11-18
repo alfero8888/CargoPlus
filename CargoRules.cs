@@ -289,6 +289,14 @@ internal static partial class CargoRules
         return combined.Length <= 20 ? combined : combined[..20];
     }
 
+    public static string NumberPrefix(string? station, string? operatorName, string bolum)
+    {
+        var office = (station ?? "").Trim().ToUpperInvariant();
+        if (office.Length is < 1 or > 2)
+            office = FirstStationLetter(office);
+        return office + FirstStationLetter(operatorName) + BolumChoice.Letter(bolum);
+    }
+
     public static string FirstStationLetter(string? branchName)
     {
         foreach (var ch in (branchName ?? "").Trim())
@@ -367,6 +375,12 @@ internal static partial class CargoRules
             'Э' or 'э' => 'E',
             'Ю' or 'ю' => 'Y',
             'Я' or 'я' => 'Y',
+            'İ' or 'I' or 'ı' => 'I',
+            'Ş' or 'ş' => 'S',
+            'Ğ' or 'ğ' => 'G',
+            'Ö' or 'ö' => 'O',
+            'Ü' or 'ü' => 'U',
+            'Ç' or 'ç' => 'C',
             _ => char.ToUpperInvariant(ch),
         };
     }

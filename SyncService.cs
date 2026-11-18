@@ -17,6 +17,8 @@ internal sealed class SyncService : IDisposable
     private DateOnly _archivedOn;
     private int _aligned;
 
+    public string OperatorName { get; set; } = "";
+
     public SyncService(LocalStore store, RemoteDb remote)
     {
         _store = store;
@@ -56,7 +58,7 @@ internal sealed class SyncService : IDisposable
             {
                 try
                 {
-                    _store.AlignCounters(settings, (prefix, overflow) =>
+                    _store.AlignCounters(settings, OperatorName, (prefix, overflow) =>
                         _remote.LatestLetterAsync(settings, prefix, overflow).GetAwaiter().GetResult());
                 }
                 catch (Exception)
