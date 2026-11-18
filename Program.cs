@@ -5,8 +5,11 @@ namespace CargoPlus;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (DeskInstall.HandOff(args))
+            return;
+
         var mutex = new Mutex(false, @"Local\CargoPlus.Desk");
         var owned = false;
         try
