@@ -320,7 +320,9 @@ internal static class CargoPrinters
             {
                 y += 0.7f;
                 var number = bag.KodId.ToString(CultureInfo.InvariantCulture);
-                graphics.DrawString(number, bagFont, ink, new RectangleF(x, y, colKilo - x - 1, 6.4f), line);
+                // номер мешка — адаптивно: короткий (3–4 цифры) крупнее, длинный (8–9) уменьшается, чтобы не вылезать за колонку
+                using var numFont = FitReceipt(graphics, number, Pt(16f), Pt(8f), colKilo - x - 1.5f);
+                graphics.DrawString(number, numFont, ink, new RectangleF(x, y, colKilo - x - 1, 6.4f), line);
                 graphics.DrawString(bag.Kilo, bagFont, ink, new RectangleF(colKilo, y, x + contentWidth - colKilo, 6.4f), line);
                 y += 6.4f;
                 if (CargoRules.NeedsContents(bag.Bolum) && bag.Items.Count > 0)
@@ -437,6 +439,19 @@ internal static class CargoPrinters
         }
 
         return new Font("Arial", min, FontStyle.Bold, GraphicsUnit.Point);
+    }
+
+    private static Font FitReceipt(Graphics graphics, string text, float maxPoint, float minPoint, float width)
+    {
+        for (var size = maxPoint; size > minPoint; size -= 0.5f)
+        {
+            var font = new Font("Segoe UI", size, FontStyle.Bold);
+            if (graphics.MeasureString(text, font).Width <= width)
+                return font;
+            font.Dispose();
+        }
+
+        return new Font("Segoe UI", minPoint, FontStyle.Bold);
     }
 
     private static Font FitFont(Graphics graphics, string text, float maxPoint, float width)
