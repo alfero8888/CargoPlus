@@ -36,6 +36,8 @@ if ($mysqli->connect_errno) {
 }
 
 $mysqli->set_charset('utf8mb4');
+$schemaStamp = sys_get_temp_dir() . '/ubl_st_' . md5(__FILE__) . '_schema_v1';
+if (!is_file($schemaStamp)) {   // таблицы — один раз на сервер (метка-файл), не на каждый запрос
 $mysqli->query(<<<'SQL'
 CREATE TABLE IF NOT EXISTS cargo_telemetry_logs (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -56,6 +58,7 @@ CREATE TABLE IF NOT EXISTS cargo_telemetry_logs (
     KEY branch_time (branch_name, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 SQL);
+@touch($schemaStamp); }
 
 $insert = $mysqli->prepare(<<<'SQL'
 INSERT INTO cargo_telemetry_logs (
