@@ -9,10 +9,10 @@
     <RootNamespace>CargoPlus</RootNamespace>
     <AssemblyName>CargoPlus</AssemblyName>
     <ApplicationTitle>Cargo Plus</ApplicationTitle>
-    <Version>1.0.42</Version>
-    <FileVersion>1.0.42.0</FileVersion>
-    <AssemblyVersion>1.0.42.0</AssemblyVersion>
-    <InformationalVersion>1.0.42</InformationalVersion>
+    <Version>1.0.43</Version>
+    <FileVersion>1.0.43.0</FileVersion>
+    <AssemblyVersion>1.0.43.0</AssemblyVersion>
+    <InformationalVersion>1.0.43</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationIcon>brand\logo.ico</ApplicationIcon>
   </PropertyGroup>
