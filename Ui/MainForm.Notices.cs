@@ -62,10 +62,20 @@ internal sealed partial class MainForm
         {
             (telegram, mail) = await _remote.ClientChannelsAsync(_store.GetSettings(), first.Kod);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
+            // нет интернета — не мешаем работе: чек ждёт в очереди и уйдёт, когда появится связь (сайт сам выберет каналы клиента)
             UseWaitCursor = false;
-            MessageBox.Show(this, UiText.SendReceiptOffline + RemoteDb.Human(ex), UiText.SendReceiptTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            try
+            {
+                QueueClientReceipt(session, bags, "all", manual: true);
+                MessageBox.Show(this, UiText.SendReceiptOffline, UiText.SendReceiptTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, UiText.SendReceiptTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
             return;
         }
         finally

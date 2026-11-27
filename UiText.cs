@@ -105,7 +105,9 @@ internal static class UiText
     public static string SendReceiptTitle => Tr ? "Fişi müşteriye gönder" : "Отправить чек клиенту";
     public static string SendReceiptMail => Tr ? "E-posta" : "E-mail";
     public static string SendReceiptBoth => Tr ? "İkisine de" : "Оба";
-    public static string SendReceiptOffline => Tr ? "Sunucuya bağlanılamadı. İnternet gelince tekrar deneyin.\n" : "Нет связи с сервером. Попробуйте, когда появится интернет.\n";
+    public static string SendReceiptOffline => Tr
+        ? "İnternet yok. Fiş sıraya alındı — bağlantı gelince müşteriye (Telegram / e-posta, hangisi varsa) kendiliğinden gider."
+        : "Нет интернета. Чек поставлен в очередь — уйдёт клиенту сам (Telegram / e-mail, что есть), как только появится связь.";
     public static string SendReceiptQueued => Tr
         ? "Fiş müşteriye gönderilmek üzere sıraya alındı. Birkaç saniye içinde gider (internet yoksa — bağlantı gelince)."
         : "Чек поставлен в очередь. Уйдёт клиенту через несколько секунд (без интернета — как только появится связь).";

@@ -93,7 +93,7 @@ internal sealed partial class RemoteDb
         {
             await using var tg = connection.CreateCommand();
             tg.CommandText = """
-                SELECT 1 FROM tg_clients tc JOIN tg_links tl ON tl.id = tc.link_id AND tl.blocked = 0
+                SELECT 1 FROM tg_clients tc JOIN tg_links tl ON tl.id = tc.link_id AND tl.blocked = 0 AND tl.chat_id > 0
                 WHERE tc.client_id = @kod LIMIT 1
                 """;
             tg.Parameters.AddWithValue("@kod", kod);
