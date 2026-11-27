@@ -175,8 +175,12 @@ internal static class UiText
         ? "Veritabanı ayarlı değil. Yönetici sunucuyu yazmadan kod kabul edilmez."
         : "База не настроена. Приём кода недоступен, пока администратор не укажет сервер.";
     public static string Offline(int pending, string? error) => Tr
-        ? $"İnternet yok. Program kendi içinde çalışıyor. Gönderilmeyen {pending}. {error}"
-        : $"Интернета нет. Программа работает сама. Не отправлено {pending}. {error}";
+        ? $"{(string.IsNullOrWhiteSpace(error) ? NoInternet : error)} Program kendi içinde çalışıyor, veriler bilgisayarda saklanıyor. Gönderilmeyen {pending}."
+        : $"{(string.IsNullOrWhiteSpace(error) ? NoInternet : error)} Программа работает сама, данные хранятся на компьютере. Не отправлено {pending}.";
+    public static string NoInternet => Tr ? "Bilgisayarda internet yok." : "На компьютере нет интернета.";
+    public static string HostDown => Tr
+        ? "İnternet var, ama sunucu (hosting / veritabanı) yanıt vermiyor."
+        : "Интернет есть, но сервер (хостинг / база данных) не отвечает.";
     public static string AllSent(string when) => Tr ? $"Bağlı. Hepsi gitti. {when}" : $"На связи. Всё отправлено. {when}";
     public static string SomePending(int pending, string when) => Tr
         ? $"Bağlı. Gönderilmeyen {pending}. {when}"
