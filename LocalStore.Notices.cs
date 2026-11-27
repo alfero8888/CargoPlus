@@ -52,6 +52,10 @@ internal sealed partial class LocalStore
             );
             """;
         command.ExecuteNonQuery();
+        // индексы локальной базы: синхронизация каждые 4 с ищет мешки по сессии и по «не отправлен»
+        using var index = connection.CreateCommand();
+        index.CommandText = "CREATE INDEX IF NOT EXISTS ix_bags_session ON bags (session_id); CREATE INDEX IF NOT EXISTS ix_bags_synced ON bags (synced);";
+        index.ExecuteNonQuery();
     }
 
     public void QueueNotice(SessionInfo session, IReadOnlyList<BagRecord> bags, string channel, bool manual, byte[] receipt, byte[] qr)
