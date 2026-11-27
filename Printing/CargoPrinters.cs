@@ -669,6 +669,35 @@ internal static class CargoPrinters
         return cropped;
     }
 
+    /// <summary>Чек магазина картинкой PNG — тот же рисунок, что уходит на принтер (клиенту в Telegram / e-posta).</summary>
+    public static byte[] ReceiptPng(AppSettings settings, SessionInfo session, IReadOnlyList<BagRecord> bags)
+    {
+        using var tall = Sheet(576, Math.Clamp(2400 + bags.Count * 140, 2400, 30000));
+        float used;
+        using (var graphics = Graphics.FromImage(tall))
+        {
+            graphics.Clear(Color.White);
+            Prepare(graphics);
+            used = PaintReceipt(graphics, WidthMm(tall), settings, session, bags, storeCopy: true);
+        }
+
+        var height = (int)Math.Ceiling(used / 25.4f * tall.HorizontalResolution) + 16;
+        using var cropped = CropTop(tall, height);
+        using var stream = new MemoryStream();
+        cropped.Save(stream, ImageFormat.Png);
+        return stream.ToArray();
+    }
+
+    /// <summary>QR ссылки отслеживания PNG (для письма клиенту).</summary>
+    public static byte[] TrackQrPng(string trackCode)
+    {
+        var code = new string((trackCode ?? "").Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+        var url = "https://www.baraka-logistic.com/track.php" + (code.Length > 0 ? "?track=" + Uri.EscapeDataString(code) + "&website=" : "");
+        using var generator = new QRCoder.QRCodeGenerator();
+        using var data = generator.CreateQrCode(url, QRCoder.QRCodeGenerator.ECCLevel.M);
+        return new QRCoder.PngByteQRCode(data).GetGraphic(8);
+    }
+
     private static (SessionInfo Session, BagRecord Bag, BagRecord Second) Sample(AppSettings settings)
     {
         var station = (settings.StationLetter ?? "").Trim().ToUpperInvariant();

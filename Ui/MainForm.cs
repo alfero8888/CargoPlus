@@ -3,7 +3,7 @@ using System.Net.NetworkInformation;
 
 namespace CargoPlus;
 
-internal sealed class MainForm : FullScreenForm
+internal sealed partial class MainForm : FullScreenForm
 {
     private readonly LocalStore _store;
     private readonly RemoteDb _remote = new();
@@ -1183,6 +1183,9 @@ internal sealed class MainForm : FullScreenForm
             return;
         }
 
+        // клиенту — чек приёма (Telegram / e-posta), уйдёт, когда мешки будут на сервере
+        if (_printStore.Checked || _printCargo.Checked)
+            TryQueueClientReceipt(_session, bags);
         _store.CloseSession(_session.Id);
         ReleaseClient();
         GateFields();
@@ -2165,6 +2168,7 @@ internal sealed class MainForm : FullScreenForm
         var excel = Theme.Command(UiText.ExcelSave, Theme.Ok, 200);
         var goods = Theme.Command(UiText.ExportContents, Color.FromArgb(36, 92, 130), 230);
         var reprint = Theme.Command(UiText.ReprintReceipt, Theme.Header, 280);
+        var toClient = Theme.Command(UiText.SendReceipt, Color.FromArgb(34, 158, 217), 260);
         var back = Theme.Command(UiText.BackMenu, Color.FromArgb(90, 104, 116), 150);
         _bind.Add(() =>
         {
@@ -2175,6 +2179,7 @@ internal sealed class MainForm : FullScreenForm
             excel.Text = UiText.ExcelSave;
             goods.Text = UiText.ExportContents;
             reprint.Text = UiText.ReprintReceipt;
+            toClient.Text = UiText.SendReceipt;
             back.Text = UiText.BackMenu;
         });
         search.Click += (_, _) => SearchReports();
@@ -2188,6 +2193,7 @@ internal sealed class MainForm : FullScreenForm
         excel.Click += (_, _) => SaveReportExcel();
         goods.Click += (_, _) => SaveReportItems();
         reprint.Click += (_, _) => ReprintStoreReceipt();
+        toClient.Click += (_, _) => SendReceiptToClient();
         back.Click += (_, _) => ShowHome();
         _reportStore.KeyDown += (_, e) =>
         {
@@ -2252,6 +2258,8 @@ internal sealed class MainForm : FullScreenForm
             BackColor = Color.White,
         };
         bar.Controls.Add(reprint);
+        toClient.Margin = new Padding(0, 0, 8, 0);
+        bar.Controls.Add(toClient);
         bar.Controls.Add(back);
 
         PrepareGrid(_reportGrid);

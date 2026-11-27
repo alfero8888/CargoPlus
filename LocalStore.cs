@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 
 namespace CargoPlus;
 
-internal sealed class LocalStore
+internal sealed partial class LocalStore
 {
     private readonly string _connectionString;
     private readonly object _gate = new();
@@ -175,6 +175,7 @@ internal sealed class LocalStore
             if (operators == 0)
                 InsertOperator(connection, "Администратор", AccessLevels.Admin, "Администрация", "0000");
 
+            InitNotices(connection);
             KeepBagRange(connection);
             AlignUnlocked(connection, ReadSettings(connection), null);
         }

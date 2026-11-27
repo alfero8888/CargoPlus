@@ -189,6 +189,31 @@ internal sealed class SyncService : IDisposable
                     }
                 }
 
+                // чеки приёма клиенту: только когда все мешки сессии уже на сервере (после офлайна — тоже)
+                var kicked = false;
+                foreach (var notice in _store.ReadyNotices(10))
+                {
+                    try
+                    {
+                        await _remote.WriteNoticeAsync(settings, notice);
+                        _store.ForgetNotice(notice.Id);
+                        kicked = true;
+                    }
+                    catch (Exception ex) when (RemoteDb.IsLinkDown(ex))
+                    {
+                        _lastOk = null;
+                        Report(State(false, RemoteDb.Human(ex), missing));
+                        return;
+                    }
+                    catch (Exception)
+                    {
+                        break;   // сервер не принял — попробуем на следующем круге, мешки это не держит
+                    }
+                }
+
+                if (kicked)
+                    _ = RemoteDb.KickAsync();
+
                 _lastOk = DateTime.Now;
                 Report(State(true, rejected is not null ? UiText.DuplicateBag(rejected) : null, missing, rejected));
             }

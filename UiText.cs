@@ -101,6 +101,20 @@ internal static class UiText
     public static string TitleKilo => Tr ? "Kilogram" : "Килограммы";
     public static string TitleLabel => Tr ? "Etiket" : "Этикетка";
     public static string TitleReceipt => Tr ? "Fiş" : "Чек";
+    public static string SendReceipt => Tr ? "Fişi müşteriye gönder" : "Чек клиенту";
+    public static string SendReceiptTitle => Tr ? "Fişi müşteriye gönder" : "Отправить чек клиенту";
+    public static string SendReceiptMail => Tr ? "E-posta" : "E-mail";
+    public static string SendReceiptBoth => Tr ? "İkisine de" : "Оба";
+    public static string SendReceiptOffline => Tr ? "Sunucuya bağlanılamadı. İnternet gelince tekrar deneyin.\n" : "Нет связи с сервером. Попробуйте, когда появится интернет.\n";
+    public static string SendReceiptQueued => Tr
+        ? "Fiş müşteriye gönderilmek üzere sıraya alındı. Birkaç saniye içinde gider (internet yoksa — bağlantı gelince)."
+        : "Чек поставлен в очередь. Уйдёт клиенту через несколько секунд (без интернета — как только появится связь).";
+    public static string SendReceiptNoChannel(uint kod) => Tr
+        ? $"{kod} kodlu müşterinin doğrulanmış Telegram hesabı veya doğrulanmış e-postası yok. Gönderilemez."
+        : $"У клиента {kod} нет подтверждённого Telegram или подтверждённого e-mail. Отправить нельзя.";
+    public static string SendReceiptAsk(uint kod, int count) => Tr
+        ? $"Müşteri {kod} · {count} çuval.\nFiş (Türkçe / Özbekçe / Rusça) nereye gönderilsin?"
+        : $"Клиент {kod} · мешков: {count}.\nКуда отправить чек (турецкий / узбекский / русский)?";
     public static string TitleExit => Tr ? "Çıkış" : "Выход";
     public static string TitleNumbers => Tr ? "Çuval numaraları" : "Номера мешков";
     public static string Bags(int count) => Tr ? $"Çuval: {count}" : $"Мешков: {count}";

@@ -4,7 +4,7 @@ using MySqlConnector;
 
 namespace CargoPlus;
 
-internal sealed class RemoteDb
+internal sealed partial class RemoteDb
 {
     public const string DefaultTable = "priem_ob";
 
